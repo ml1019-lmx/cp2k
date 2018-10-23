@@ -23,7 +23,7 @@ MODULE qs_kind_types
                                               sgp_construction
    USE atom_types,                      ONLY: atom_ecppot_type,&
                                               lmat,&
-                                              read_ecp_potential
+                                              read_ecp_potential, atom_basis_type, release_atom_basis, init_atom_basis_cgto
    USE atom_upf,                        ONLY: atom_read_upf,&
                                               atom_release_upf,&
                                               atom_upfpot_type
@@ -54,7 +54,7 @@ MODULE qs_kind_types
    USE input_constants,                 ONLY: &
         do_method_am1, do_method_dftb, do_method_mndo, do_method_mndod, do_method_pdg, &
         do_method_pm3, do_method_pm6, do_method_pm6fm, do_method_pnnl, do_method_pw, &
-        do_method_rm1, do_qs, do_sirius
+        do_method_rm1, do_qs, do_sirius, do_method_gapw, do_gapw_log
    USE input_section_types,             ONLY: section_vals_get,&
                                               section_vals_get_subs_vals,&
                                               section_vals_type,&
@@ -164,6 +164,11 @@ MODULE qs_kind_types
          DIMENSION(20)                       :: basis_sets
       !
       TYPE(paw_proj_set_type), POINTER       :: paw_proj_set => Null()
+      !
+      LOGICAL                                :: frozen_core = .FALSE.
+      REAL(dp)                               :: efc = 0._dp 
+      REAL(KIND=dp), DIMENSION(:), POINTER   :: rho_fc => Null()
+      REAL(KIND=dp), DIMENSION(:), POINTER   :: tau_fc => Null()
       !
       REAL(dp)                               :: hard_radius = 0.8_dp*bohr ! for hard and soft exp
       REAL(dp)                               :: hard0_radius = 0.8_dp*bohr ! for hard exp of rho0
@@ -287,6 +292,12 @@ CONTAINS
             IF (ASSOCIATED(qs_kind_set(ikind)%elec_conf)) THEN
                DEALLOCATE (qs_kind_set(ikind)%elec_conf)
             END IF
+            IF (ASSOCIATED(qs_kind_set(ikind)%rho_fc)) THEN
+               DEALLOCATE (qs_kind_set(ikind)%rho_fc)
+            END IF
+            IF (ASSOCIATED(qs_kind_set(ikind)%tau_fc)) THEN
+               DEALLOCATE (qs_kind_set(ikind)%tau_fc)
+            END IF
 
             IF (ASSOCIATED(qs_kind_set(ikind)%dft_plus_u)) THEN
                IF (ASSOCIATED(qs_kind_set(ikind)%dft_plus_u%orbitals)) THEN
@@ -365,6 +376,7 @@ CONTAINS
 !> \param paw_proj_set ...
 !> \param softb ...
 !> \param paw_atom ...
+!> \param frozen_core ...
 !> \param hard_radius ...
 !> \param hard0_radius ...
 !> \param max_rad_local ...
@@ -411,7 +423,7 @@ CONTAINS
                           dftb3_param, zeff, elec_conf, mao, lmax_dftb, &
                           alpha_core_charge, ccore_charge, core_charge, core_charge_radius, &
                           soft_basis_set, hard_basis_set, paw_proj_set, softb, &
-                          paw_atom, hard_radius, hard0_radius, max_rad_local, &
+                          frozen_core, efc, paw_atom, hard_radius, hard0_radius, max_rad_local, &
                           gpw_type_forced, harmonics, max_iso_not0, max_s_harm, grid_atom, &
                           ngrid_ang, ngrid_rad, lmax_rho0, &
                           dft_plus_u_atom, l_of_dft_plus_u, u_minus_j, dispersion, &
@@ -431,7 +443,7 @@ CONTAINS
       TYPE(atom_upfpot_type), OPTIONAL, POINTER          :: upf_potential
       TYPE(semi_empirical_type), OPTIONAL, POINTER       :: se_parameter
       TYPE(qs_dftb_atom_type), OPTIONAL, POINTER         :: dftb_parameter
-      REAL(KIND=dp), INTENT(OUT), OPTIONAL               :: dftb3_param, zeff
+      REAL(KIND=dp), INTENT(OUT), OPTIONAL               :: dftb3_param, zeff, efc
       INTEGER, DIMENSION(:), OPTIONAL, POINTER           :: elec_conf
       INTEGER, INTENT(OUT), OPTIONAL                     :: mao, lmax_dftb
       REAL(KIND=dp), INTENT(OUT), OPTIONAL               :: alpha_core_charge, ccore_charge, &
@@ -440,6 +452,7 @@ CONTAINS
       TYPE(paw_proj_set_type), OPTIONAL, POINTER         :: paw_proj_set
       LOGICAL, INTENT(IN), OPTIONAL                      :: softb
       LOGICAL, INTENT(OUT), OPTIONAL                     :: paw_atom
+      LOGICAL, INTENT(OUT), OPTIONAL                     :: frozen_core
       REAL(dp), INTENT(OUT), OPTIONAL                    :: hard_radius, hard0_radius, max_rad_local
       LOGICAL, INTENT(OUT), OPTIONAL                     :: gpw_type_forced
       TYPE(harmonics_atom_type), OPTIONAL, POINTER       :: harmonics
@@ -619,6 +632,8 @@ CONTAINS
 
       IF (PRESENT(paw_proj_set)) paw_proj_set => qs_kind%paw_proj_set
       IF (PRESENT(paw_atom)) paw_atom = qs_kind%paw_atom
+      IF (PRESENT(frozen_core)) frozen_core = qs_kind%frozen_core
+      IF (PRESENT(efc)) efc = qs_kind%efc
       IF (PRESENT(gpw_type_forced)) gpw_type_forced = qs_kind%gpw_type_forced
       IF (PRESENT(hard_radius)) hard_radius = qs_kind%hard_radius
       IF (PRESENT(hard0_radius)) hard0_radius = qs_kind%hard0_radius
@@ -782,7 +797,7 @@ CONTAINS
 ! **************************************************************************************************
    SUBROUTINE get_qs_kind_set(qs_kind_set, &
                               all_potential_present, tnadd_potential_present, gth_potential_present, &
-                              sgp_potential_present, paw_atom_present, dft_plus_u_atom_present, &
+                              sgp_potential_present, paw_atom_present, frozen_core_present, dft_plus_u_atom_present, &
                               maxcgf, maxsgf, maxco, maxco_proj, maxgtops, maxlgto, maxlprj, maxnset, maxsgf_set, &
                               ncgf, npgf, nset, nsgf, nshell, maxpol, maxlppl, maxlppnl, maxppnl, &
                               nelectron, maxder, max_ngrid_rad, max_sph_harm, maxg_iso_not0, lmax_rho0, &
@@ -790,7 +805,7 @@ CONTAINS
 
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       LOGICAL, INTENT(OUT), OPTIONAL :: all_potential_present, tnadd_potential_present, &
-         gth_potential_present, sgp_potential_present, paw_atom_present, dft_plus_u_atom_present
+         gth_potential_present, sgp_potential_present, paw_atom_present, frozen_core_present, dft_plus_u_atom_present
       INTEGER, INTENT(OUT), OPTIONAL :: maxcgf, maxsgf, maxco, maxco_proj, maxgtops, maxlgto, &
          maxlprj, maxnset, maxsgf_set, ncgf, npgf, nset, nsgf, nshell, maxpol, maxlppl, maxlppnl, &
          maxppnl, nelectron
@@ -806,7 +821,7 @@ CONTAINS
       INTEGER                                            :: ikind, imax, lmax_rho0_kind, &
                                                             max_iso_not0, max_s_harm, n, &
                                                             ngrid_rad, nkind, nrloc(10)
-      LOGICAL                                            :: dft_plus_u_atom, paw_atom
+      LOGICAL                                            :: dft_plus_u_atom, frozen_core, paw_atom
       REAL(KIND=dp)                                      :: zeff, zeff_correction
       TYPE(all_potential_type), POINTER                  :: all_potential
       TYPE(gth_potential_type), POINTER                  :: gth_potential
@@ -850,6 +865,7 @@ CONTAINS
          IF (PRESENT(gth_potential_present)) gth_potential_present = .FALSE.
          IF (PRESENT(sgp_potential_present)) sgp_potential_present = .FALSE.
          IF (PRESENT(paw_atom_present)) paw_atom_present = .FALSE.
+         IF (PRESENT(frozen_core_present)) frozen_core_present = .FALSE.
          IF (PRESENT(max_ngrid_rad)) max_ngrid_rad = 0
          IF (PRESENT(max_sph_harm)) max_sph_harm = 0
          IF (PRESENT(lmax_rho0)) lmax_rho0 = 0
@@ -868,6 +884,7 @@ CONTAINS
                              max_s_harm=max_s_harm, &
                              max_iso_not0=max_iso_not0, &
                              paw_atom=paw_atom, &
+                             frozen_core=frozen_core, &
                              dft_plus_u_atom=dft_plus_u_atom, &
                              lmax_rho0=lmax_rho0_kind)
 
@@ -1075,6 +1092,12 @@ CONTAINS
                END IF
             END IF
 
+            IF (PRESENT(frozen_core_present)) THEN
+               IF (frozen_core) THEN
+                  frozen_core_present = .TRUE.
+               END IF
+            END IF
+
             IF (PRESENT(dft_plus_u_atom_present)) THEN
                IF (dft_plus_u_atom) THEN
                   dft_plus_u_atom_present = .TRUE.
@@ -1194,7 +1217,7 @@ CONTAINS
          routineP = moduleN//':'//routineN
 
       INTEGER                                            :: ikind, nkind
-      LOGICAL                                            :: gpw, paw_atom
+      LOGICAL                                            :: gpw, paw_atom, force_paw, frozen_core
       REAL(dp)                                           :: max_rad_local_type, rc
       TYPE(gto_basis_set_type), POINTER                  :: orb_basis
       TYPE(paw_proj_set_type), POINTER                   :: paw_proj
@@ -1215,12 +1238,16 @@ CONTAINS
             CALL get_qs_kind(qs_kind=qs_kind, basis_set=orb_basis)
             qs_kind%hard_basis_set => orb_basis
 
-            CALL get_qs_kind(qs_kind=qs_kind, hard_radius=rc, &
+            CALL get_qs_kind(qs_kind=qs_kind, hard_radius=rc, frozen_core=frozen_core, &
                              max_rad_local=max_rad_local_type, gpw_type_forced=gpw)
+            force_paw = qs_control%gapw_control%force_paw
+            IF(frozen_core) THEN
+               gpw = .FALSE.
+               force_paw = .TRUE.
+            END IF
 
             CALL create_soft_basis(orb_basis, qs_kind%soft_basis_set, &
-                                   qs_control%gapw_control%eps_fit, rc, paw_atom, &
-                                   qs_control%gapw_control%force_paw, gpw)
+                                   qs_control%gapw_control%eps_fit, rc, paw_atom, force_paw, gpw)
 
             CALL set_qs_kind(qs_kind=qs_kind, paw_atom=paw_atom)
 
@@ -1380,8 +1407,8 @@ CONTAINS
          nexp, ngauss, nlcc, nloc, nnl, norbitals, npaodesc, npaopot, nppnl, nspin, z
       INTEGER, DIMENSION(:), POINTER                     :: add_el, elec_conf, orbitals
       LOGICAL :: check, explicit, explicit_basis, explicit_kgpot, explicit_potential, nobasis, &
-         section_enabled, subsection_enabled, update_input
-      REAL(KIND=dp)                                      :: alpha, ccore, rc, zeff_correction
+         section_enabled, subsection_enabled, update_input, fcore
+      REAL(KIND=dp)                                      :: alpha, ccore, rc, zeff_correction, efc
       REAL(KIND=dp), DIMENSION(3)                        :: error
       REAL(KIND=dp), DIMENSION(:), POINTER               :: a_nl, aloc, anlcc, cloc, cnlcc, nelec
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: h_nl
@@ -1592,6 +1619,12 @@ CONTAINS
             CALL section_vals_val_get(pao_desc_section, keyword_name="WEIGHT", i_rep_section=ipaodesc, &
                                       r_val=qs_kind%pao_descriptors(ipaodesc)%weight)
          ENDDO
+
+         ! FROZEN_CORE
+         CALL section_vals_val_get(kind_section, keyword_name="FROZEN_CORE", l_val=fcore)
+         CALL set_qs_kind(qs_kind, frozen_core=fcore)
+         CALL section_vals_val_get(kind_section, keyword_name="FROZEN_CORE_ENERGY", r_val=efc)
+         CALL set_qs_kind(qs_kind, efc=efc)
 
          ! parse ELEC_CONF
          CALL section_vals_val_get(kind_section, i_rep_section=k_rep, &
@@ -2348,7 +2381,7 @@ CONTAINS
          routineP = moduleN//':'//routineN
 
       INTEGER                                            :: handle, ikind, method, nkind, qs_method
-      LOGICAL                                            :: no_fail
+      LOGICAL                                            :: no_fail, fcpresent
 
       CALL timeset(routineN, handle)
 
@@ -2383,6 +2416,17 @@ CONTAINS
          qs_kind_set(ikind)%natom = atomic_kind_set(ikind)%natom
          CALL read_qs_kind(qs_kind_set(ikind), kind_section, para_env, force_env_section, no_fail, qs_method)
       END DO
+
+      ! set up frozen core
+      CALL get_qs_kind_set(qs_kind_set, frozen_core_present=fcpresent)
+      IF(fcpresent .AND. method==do_qs) THEN
+         IF(qs_method /= do_method_gapw) THEN
+             CALL cp_abort(__LOCATION__, "Frozen core calculations only with GAPW method possible")
+         END IF
+         DO ikind = 1, nkind
+            CALL set_fc_kind(qs_kind_set(ikind))
+         END DO
+      END IF
 
       CALL timestop(handle)
 
@@ -2477,7 +2521,7 @@ CONTAINS
    SUBROUTINE set_qs_kind(qs_kind, paw_atom, ghost, floating, hard_radius, hard0_radius, &
                           soft_basis_set, hard_basis_set, lmax_rho0, zeff, &
                           no_optimize, dispersion, u_minus_j, reltmat, &
-                          dftb_parameter, &
+                          dftb_parameter, frozen_core, efc,&
                           elec_conf, pao_basis_size)
 
       TYPE(qs_kind_type), INTENT(INOUT)                  :: qs_kind
@@ -2491,6 +2535,8 @@ CONTAINS
       REAL(KIND=dp), INTENT(IN), OPTIONAL                :: u_minus_j
       REAL(KIND=dp), DIMENSION(:, :), OPTIONAL, POINTER  :: reltmat
       TYPE(qs_dftb_atom_type), OPTIONAL, POINTER         :: dftb_parameter
+      LOGICAL, INTENT(IN), OPTIONAL                      :: frozen_core
+      REAL(KIND=dp), INTENT(IN), OPTIONAL                :: efc
       INTEGER, DIMENSION(:), INTENT(IN), OPTIONAL        :: elec_conf
       INTEGER, INTENT(IN), OPTIONAL                      :: pao_basis_size
 
@@ -2536,6 +2582,9 @@ CONTAINS
       IF (PRESENT(reltmat)) qs_kind%reltmat => reltmat
 
       IF (PRESENT(pao_basis_size)) qs_kind%pao_basis_size = pao_basis_size
+
+      IF (PRESENT(frozen_core)) qs_kind%frozen_core = frozen_core
+      IF (PRESENT(efc)) qs_kind%efc = efc
 
    END SUBROUTINE set_qs_kind
 
@@ -3051,6 +3100,46 @@ CONTAINS
 
    END FUNCTION has_nlcc
 
+! **************************************************************************************************
+!> \brief ...
+!> \param qs_kind ...
+! **************************************************************************************************
+   SUBROUTINE set_fc_kind(qs_kind)
+      TYPE(qs_kind_type), INTENT(INOUT)                  :: qs_kind
+
+      CHARACTER(len=*), PARAMETER :: routineN = 'set_fc_kind', &
+         routineP = moduleN//':'//routineN
+
+      LOGICAL                                            :: frozen_core
+      INTEGER                                            :: ii, l, ll, lx, nn, ngp
+      REAL(KIND=dp)                                      :: efc
+      TYPE(all_potential_type), POINTER                  :: all_potential
+      TYPE(gth_potential_type), POINTER                  :: gth_potential
+      TYPE(sgp_potential_type), POINTER                  :: sgp_potential
+      TYPE(grid_atom_type), POINTER                      :: grid_atom
+      TYPE(gto_basis_set_type), POINTER                  :: fc_basis
+      TYPE(atom_basis_type), POINTER                     :: basis
+
+      CALL get_qs_kind(qs_kind,frozen_core=frozen_core)
+      IF(frozen_core) THEN
+         CALL get_qs_kind(qs_kind, grid_atom=grid_atom)
+         CALL get_qs_kind(qs_kind, basis_set=fc_basis, basis_type="FC")
+         IF(.NOT.ASSOCIATED(fc_basis)) THEN
+            CALL cp_abort(__LOCATION__, qs_kind%name//": Atoms with frozen core need a FC basis defined")
+         END IF
+         ! initialize atomic basis
+         ALLOCATE (basis)
+         NULLIFY (basis%grid)
+         ngp = 501
+         CALL init_atom_basis_cgto(basis,fc_basis%nset,fc_basis%lmin,fc_basis%lmax,fc_basis%npgf,&
+                                   fc_basis%nshell,fc_basis%l,fc_basis%zet,fc_basis%gcc,do_gapw_log,ngp)
+         ! calculate integrals
+         !
+         CALL release_atom_basis(basis)
+         !
+      END IF
+
+   END SUBROUTINE set_fc_kind
 ! **************************************************************************************************
 
 END MODULE qs_kind_types

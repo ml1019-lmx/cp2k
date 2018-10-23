@@ -308,7 +308,7 @@ MODULE atom_types
    PUBLIC :: atom_compare_grids
    PUBLIC :: create_atom_type, release_atom_type, set_atom
    PUBLIC :: create_atom_orbs, release_atom_orbs
-   PUBLIC :: init_atom_basis, init_atom_basis_default_pp, atom_basis_gridrep, release_atom_basis
+   PUBLIC :: init_atom_basis, init_atom_basis_default_pp, atom_basis_gridrep, release_atom_basis, init_atom_basis_cgto
    PUBLIC :: init_atom_potential, release_atom_potential
    PUBLIC :: read_atom_opt_section, read_ecp_potential
    PUBLIC :: Clementi_geobas
@@ -2892,6 +2892,121 @@ CONTAINS
       END IF
 
    END FUNCTION atom_compare_grids
+! **************************************************************************************************
+!> \brief Initialize the basis for the atomic code from GTO basic info
+!> \param basis ...
+! **************************************************************************************************
+   SUBROUTINE init_atom_basis_cgto(basis,nset,lmin,lmax,npgf,nshell,l,zet,gcc,&
+                                   quadtype,ngp)
+      TYPE(atom_basis_type), INTENT(INOUT)               :: basis
+      INTEGER, INTENT(IN)                                :: nset
+      INTEGER, DIMENSION(:), INTENT(IN)                  :: lmin, lmax, npgf, nshell
+      INTEGER, DIMENSION(:,:), INTENT(IN)                :: l
+      REAL(KIND=dp), DIMENSION(:,:), INTENT(IN)          :: zet
+      REAL(KIND=dp), DIMENSION(:,:,:), INTENT(IN)        :: gcc
+      INTEGER, INTENT(IN)                                :: quadtype, ngp
+
+      CHARACTER(len=*), PARAMETER :: routineN = 'init_atom_basis_cgto', &
+         routineP = moduleN//':'//routineN
+
+      INTEGER, PARAMETER                                 :: lmat = 4
+      INTEGER                                            :: i,j,k,nj,ns,ii,ipgf,lx,nr,m
+      REAL(KIND=dp)                                      :: expzet, prefac, gcca, zeta, al, rk, ear
+
+      NULLIFY (basis%am, basis%cm, basis%as, basis%ns, basis%bf, basis%dbf, basis%ddbf)
+      ! allocate and initialize the atomic grid
+      CALL allocate_grid_atom(basis%grid)
+      CALL create_grid_atom(basis%grid, ngp, 1, 1, 0, quadtype)
+      basis%grid%nr = ngp
+      basis%geometrical = .FALSE.
+      basis%aval = 0._dp
+      basis%cval = 0._dp
+      basis%start = 0
+      basis%basis_type = CGTO_BASIS
+      ! fill in the basis data structures
+      basis%nprim = 0
+      basis%nbas = 0
+      DO i = 1, nset
+         DO j = lmin(i), lmax(i)
+            basis%nprim(j) = basis%nprim(j)+npgf(i)
+         END DO
+         DO j = 1, nshell(i)
+            k = l(j, i)
+            basis%nbas(k) = basis%nbas(k)+1
+         END DO
+      END DO
+
+      nj = MAXVAL(basis%nprim)
+      ns = MAXVAL(basis%nbas)
+      ALLOCATE (basis%am(nj, 0:lmat))
+      basis%am = 0._dp
+      ALLOCATE (basis%cm(nj, ns, 0:lmat))
+      basis%cm = 0._dp
+
+      DO j = 0, lmat
+         nj = 0
+         ns = 0
+         DO i = 1, nset
+            IF (j >= lmin(i) .AND. j <= lmax(i)) THEN
+               DO ipgf = 1, npgf(i)
+                  basis%am(nj+ipgf, j) = zet(ipgf, i)
+               END DO
+               DO ii = 1, nshell(i)
+                  IF (l(ii, i) == j) THEN
+                     ns = ns+1
+                     DO ipgf = 1, npgf(i)
+                        basis%cm(nj+ipgf, ns, j) = gcc(ipgf, ii, i)
+                     END DO
+                  END IF
+               END DO
+               nj = nj+npgf(i)
+            END IF
+         END DO
+      END DO
+
+      ! Normalization
+      DO j = 0, lmat
+         expzet = 0.25_dp*REAL(2*j+3, dp)
+         prefac = SQRT(SQRT(pi)/2._dp**(j+2)*dfac(2*j+1))
+         DO ipgf = 1, basis%nprim(j)
+            DO ii = 1, basis%nbas(j)
+               gcca = basis%cm(ipgf, ii, j)
+               zeta = 2._dp*basis%am(ipgf, j)
+               basis%cm(ipgf, ii, j) = zeta**expzet*gcca/prefac
+            END DO
+         END DO
+      END DO
+
+      ! initialize basis function on a radial grid
+      nr = basis%grid%nr
+      m = MAXVAL(basis%nbas)
+      ALLOCATE (basis%bf(nr, m, 0:lmat))
+      ALLOCATE (basis%dbf(nr, m, 0:lmat))
+      ALLOCATE (basis%ddbf(nr, m, 0:lmat))
+      basis%bf = 0._dp
+      basis%dbf = 0._dp
+      basis%ddbf = 0._dp
+      DO lx = 0, lmat
+         DO i = 1, basis%nprim(lx)
+            al = basis%am(i, lx)
+            DO k = 1, nr
+               rk = basis%grid%rad(k)
+               ear = EXP(-al*basis%grid%rad(k)**2)
+               DO j = 1, basis%nbas(lx)
+                  basis%bf(k, j, lx) = basis%bf(k, j, lx)+rk**lx*ear*basis%cm(i, j, lx)
+                  basis%dbf(k, j, lx) = basis%dbf(k, j, lx) &
+                                       +(REAL(lx, dp)*rk**(lx-1)-2._dp*al*rk**(lx+1))*ear*basis%cm(i, j, lx)
+                  basis%ddbf(k, j, lx) = basis%ddbf(k, j, lx)+ &
+                                        (REAL(lx*(lx-1), dp)*rk**(lx-2)-2._dp*al* &
+                                         REAL(2*lx+1, dp)*rk**(lx)+4._dp*al*rk**(lx+2))* &
+                                        ear*basis%cm(i, j, lx)
+               END DO
+            END DO
+         END DO
+      END DO
+
+   END SUBROUTINE init_atom_basis_cgto
+
 ! **************************************************************************************************
 
 END MODULE atom_types

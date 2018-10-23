@@ -1111,6 +1111,21 @@ CONTAINS
       CALL keyword_release(keyword)
       ! end of old basis set keywords
 
+      CALL keyword_create(keyword, name="FROZEN_CORE", &
+                          description="Perform a frozen core calculation for this atom type. "// &
+                          "This requires the GAPW method.", &
+                          usage="FROZEN_CORE logical", &
+                          default_l_val=.FALSE., lone_keyword_l_val=.TRUE.)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, name="FROZEN_CORE_ENERGY", &
+                          description="Constant energy shift [Hartree] due to FC orbitals", &
+                          usage="Frozen_core_energy 1.0", n_var=1, &
+                          default_r_val=0.0_dp)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
       CALL keyword_create(keyword, name="ELEC_CONF", &
                           description="Specifies the electronic configration used in construction the "// &
                           "atomic initial guess (see the pseudo potential file for the default values.", &
