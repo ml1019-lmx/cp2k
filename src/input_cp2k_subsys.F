@@ -1113,7 +1113,7 @@ CONTAINS
 
       CALL keyword_create(keyword, name="FROZEN_CORE", &
                           description="Perform a frozen core calculation for this atom type. "// &
-                          "This requires the GAPW method.", &
+                          "This requires the GAPW method and a <FC> basis set definition.", &
                           usage="FROZEN_CORE logical", &
                           default_l_val=.FALSE., lone_keyword_l_val=.TRUE.)
       CALL section_add_keyword(section, keyword)
