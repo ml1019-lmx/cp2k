@@ -167,7 +167,7 @@ MODULE qs_kind_types
       !
       LOGICAL                                :: frozen_core = .FALSE.
       REAL(dp)                               :: efc = 0._dp
-      REAL(KIND=dp), DIMENSION(:,:), POINTER :: hshift => Null()
+      REAL(KIND=dp), DIMENSION(:, :), POINTER :: hshift => Null()
       REAL(KIND=dp), DIMENSION(:), POINTER   :: rho_fc => Null()
       REAL(KIND=dp), DIMENSION(:), POINTER   :: drho_fc => Null()
       REAL(KIND=dp), DIMENSION(:), POINTER   :: tau_fc => Null()

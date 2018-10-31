@@ -99,7 +99,7 @@ CONTAINS
       INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
       CHARACTER(LEN=*), INTENT(IN)                       :: basis_type
 
-      CHARACTER(LEN=*), PARAMETER :: routineN = 'build_core_ppnl', &
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'build_core_fcnl', &
          routineP = moduleN//':'//routineN
 
       INTEGER :: atom_a, atom_b, atom_c, first_col, handle, i, iab, iac, iatom, ibc, icol, ikind, &

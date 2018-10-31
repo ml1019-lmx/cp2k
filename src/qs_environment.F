@@ -471,8 +471,8 @@ CONTAINS
          nelectron, nkind, output_unit, tnadd_method
       INTEGER, DIMENSION(2)                              :: n_mo, nelectron_spin
       LOGICAL                                            :: all_potential_present, be_silent, &
-                                                            do_kpoints, e1terms, has_unit_metric, &
-                                                            lribas, was_present, fc_present
+                                                            do_kpoints, e1terms, fc_present, &
+                                                            has_unit_metric, lribas, was_present
       REAL(dp)                                           :: ewald_rcut, maxocc, verlet_skin
       TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
       TYPE(cp_logger_type), POINTER                      :: logger

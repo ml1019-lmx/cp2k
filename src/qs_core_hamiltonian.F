@@ -76,9 +76,9 @@ MODULE qs_core_hamiltonian
    USE atomic_kind_types,               ONLY: atomic_kind_type,&
                                               get_atomic_kind_set
    USE core_ae,                         ONLY: build_core_ae
+   USE core_fcnl,                       ONLY: build_core_fcnl
    USE core_ppl,                        ONLY: build_core_ppl
    USE core_ppnl,                       ONLY: build_core_ppnl
-   USE core_fcnl,                       ONLY: build_core_fcnl
    USE cp_blacs_env,                    ONLY: cp_blacs_env_type
    USE cp_control_types,                ONLY: dft_control_type
    USE cp_dbcsr_cp2k_link,              ONLY: cp_dbcsr_alloc_block_from_nbl
@@ -452,8 +452,8 @@ CONTAINS
 
       INTEGER                                            :: nimages
       INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
-      LOGICAL                                            :: all_present, ppl_present, ppnl_present, &
-                                                            use_virial, fc_present
+      LOGICAL                                            :: all_present, fc_present, ppl_present, &
+                                                            ppnl_present, use_virial
       REAL(KIND=dp)                                      :: eps_ppnl
       TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
       TYPE(dft_control_type), POINTER                    :: dft_control

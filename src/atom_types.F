@@ -2922,7 +2922,7 @@ CONTAINS
       INTEGER, PARAMETER                                 :: lmat = 4
 
       INTEGER                                            :: i, ii, ipgf, j, k, lx, m, nj, nr, ns
-      REAL(KIND=dp)                                      :: al, ear, expzet, gcca, prefac, rk, zeta
+      REAL(KIND=dp)                                      :: al, ear, prefac, rk
 
       NULLIFY (basis%am, basis%cm, basis%as, basis%ns, basis%bf, basis%dbf, basis%ddbf)
       ! allocate and initialize the atomic grid

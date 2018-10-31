@@ -92,11 +92,11 @@ CONTAINS
                                                             natom, nr, nspins, num_pe
       INTEGER, DIMENSION(2, 3)                           :: bounds
       INTEGER, DIMENSION(:), POINTER                     :: atom_list
-      LOGICAL                                            :: donlcc, dofc, epr_xc, gradient_f, lsd, nlcc, &
-                                                            paw_atom, tau_f
+      LOGICAL                                            :: dofc, donlcc, epr_xc, gradient_f, lsd, &
+                                                            nlcc, paw_atom, tau_f
       REAL(dp)                                           :: density_cut, exc_h, exc_s, gradient_cut, &
                                                             my_adiabatic_rescale_factor, tau_cut
-      REAL(dp), DIMENSION(:), POINTER                    :: rho_fc, drho_fc, tau_fc
+      REAL(dp), DIMENSION(:), POINTER                    :: drho_fc, rho_fc, tau_fc
       REAL(dp), DIMENSION(:, :), POINTER                 :: rho_h, rho_nlcc, rho_s, tau_h, tau_s, &
                                                             weight
       REAL(dp), DIMENSION(:, :, :), POINTER              :: vtau_h, vtau_s, vxc_h, vxc_s
@@ -265,8 +265,8 @@ CONTAINS
 
             ! frozen core density
             CALL get_qs_kind(qs_kind_set(ikind), frozen_core=dofc)
-            IF(dofc) THEN
-               NULLIFY (rho_fc,drho_fc,tau_fc)
+            IF (dofc) THEN
+               NULLIFY (rho_fc, drho_fc, tau_fc)
                rho_fc => qs_kind_set(ikind)%rho_fc
                drho_fc => qs_kind_set(ikind)%drho_fc
                tau_fc => qs_kind_set(ikind)%tau_fc
@@ -315,7 +315,7 @@ CONTAINS
                                         ir, rho_nlcc(:, 1), rho_h, rho_s, rho_nlcc(:, 2), drho_h, drho_s)
                   END IF
                   IF (dofc) THEN
-                     CALL calc_rho_fc(grid_atom, nspins, gradient_f, tau_f,&
+                     CALL calc_rho_fc(grid_atom, nspins, gradient_f, tau_f, &
                                       ir, rho_fc, drho_fc, tau_fc, rho_h, drho_h, tau_h)
                   END IF
                   CALL fill_rho_set(rho_set_h, lsd, nspins, needs, rho_h, drho_h, tau_h, na, ir)
@@ -989,7 +989,21 @@ CONTAINS
 
    END SUBROUTINE calc_rho_nlcc
 
-   SUBROUTINE calc_rho_fc(grid_atom, nspins, gradient_f, tau_f,&
+! **************************************************************************************************
+!> \brief ...
+!> \param grid_atom ...
+!> \param nspins ...
+!> \param gradient_f ...
+!> \param tau_f ...
+!> \param ir ...
+!> \param rho_fc ...
+!> \param drho_fc ...
+!> \param tau_fc ...
+!> \param rho_h ...
+!> \param drho_h ...
+!> \param tau_h ...
+! **************************************************************************************************
+   SUBROUTINE calc_rho_fc(grid_atom, nspins, gradient_f, tau_f, &
                           ir, rho_fc, drho_fc, tau_fc, rho_h, drho_h, tau_h)
 
       TYPE(grid_atom_type), POINTER                      :: grid_atom
@@ -1004,7 +1018,8 @@ CONTAINS
       CHARACTER(LEN=*), PARAMETER :: routineN = 'calc_rho_fc', routineP = moduleN//':'//routineN
 
       INTEGER                                            :: ia, ispin, na
-      REAL(KIND=dp)                                      :: tau, drho, dx, dy, dz, rad, rho, urad, xsp
+      REAL(KIND=dp)                                      :: drho, dx, dy, dz, rad, rho, tau, urad, &
+                                                            xsp
 
       CPASSERT(ASSOCIATED(rho_h))
       IF (gradient_f) THEN
