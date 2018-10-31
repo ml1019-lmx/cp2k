@@ -169,6 +169,7 @@ MODULE qs_kind_types
       REAL(dp)                               :: efc = 0._dp
       REAL(KIND=dp), DIMENSION(:,:), POINTER :: hshift => Null()
       REAL(KIND=dp), DIMENSION(:), POINTER   :: rho_fc => Null()
+      REAL(KIND=dp), DIMENSION(:), POINTER   :: drho_fc => Null()
       REAL(KIND=dp), DIMENSION(:), POINTER   :: tau_fc => Null()
       !
       REAL(dp)                               :: hard_radius = 0.8_dp*bohr ! for hard and soft exp
@@ -298,6 +299,9 @@ CONTAINS
             END IF
             IF (ASSOCIATED(qs_kind_set(ikind)%rho_fc)) THEN
                DEALLOCATE (qs_kind_set(ikind)%rho_fc)
+            END IF
+            IF (ASSOCIATED(qs_kind_set(ikind)%drho_fc)) THEN
+               DEALLOCATE (qs_kind_set(ikind)%drho_fc)
             END IF
             IF (ASSOCIATED(qs_kind_set(ikind)%tau_fc)) THEN
                DEALLOCATE (qs_kind_set(ikind)%tau_fc)

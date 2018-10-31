@@ -46,7 +46,7 @@ CONTAINS
 
       INTEGER                                            :: i, ii, ikind, iounit, l, ngp, nkind, nn, nset, nsmax, ns
       LOGICAL                                            :: fcpresent, frozen_core
-      REAL(KIND=dp)                                      :: ecore, efc, ekin, exchange, ortho
+      REAL(KIND=dp)                                      :: ecore, efc, ekin, exchange, ortho, fc
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: pmat
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: hshift
       TYPE(atom_basis_type), POINTER                     :: basis
@@ -114,6 +114,21 @@ CONTAINS
                      END IF
                   END DO
                END DO
+              ! core density
+              ns = grid_atom%nr
+              ALLOCATE(qs_kind%rho_fc(ns),qs_kind%drho_fc(ns),qs_kind%tau_fc(ns))
+              qs_kind%rho_fc = 0.0_dp
+              qs_kind%drho_fc = 0.0_dp
+              qs_kind%tau_fc = 0.0_dp
+              DO l=0,3
+                 fc = REAL(2*(2*l+1), KIND=dp)
+                 DO i=1,basis%nbas(l)
+                    qs_kind%rho_fc(:) = qs_kind%rho_fc(:) + fc*basis%bf(:, i, l)**2
+                    qs_kind%drho_fc(:) = qs_kind%drho_fc(:) + 2.0_dp*fc*basis%dbf(:, i, l)*basis%bf(:, i, l)
+                    qs_kind%tau_fc(:) = qs_kind%tau_fc(:) + 0.5_dp*fc * ( basis%dbf(:, i, l)**2 + &
+                                        REAL(l*(l+1), dp)*basis%bf(:, i, l)**2/grid_atom%rad2(:) )
+                 END DO
+              END DO
 !deb
                WRITE (6, *) "FROZEN ENERGY          ", efc
                WRITE (6, *) "FROZEN ENERGY kin      ", ekin

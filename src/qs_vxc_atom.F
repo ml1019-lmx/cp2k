@@ -92,10 +92,11 @@ CONTAINS
                                                             natom, nr, nspins, num_pe
       INTEGER, DIMENSION(2, 3)                           :: bounds
       INTEGER, DIMENSION(:), POINTER                     :: atom_list
-      LOGICAL                                            :: donlcc, epr_xc, gradient_f, lsd, nlcc, &
+      LOGICAL                                            :: donlcc, dofc, epr_xc, gradient_f, lsd, nlcc, &
                                                             paw_atom, tau_f
       REAL(dp)                                           :: density_cut, exc_h, exc_s, gradient_cut, &
                                                             my_adiabatic_rescale_factor, tau_cut
+      REAL(dp), DIMENSION(:), POINTER                    :: rho_fc, drho_fc, tau_fc
       REAL(dp), DIMENSION(:, :), POINTER                 :: rho_h, rho_nlcc, rho_s, tau_h, tau_s, &
                                                             weight
       REAL(dp), DIMENSION(:, :, :), POINTER              :: vtau_h, vtau_s, vxc_h, vxc_s
@@ -262,6 +263,15 @@ CONTAINS
                IF (ASSOCIATED(rho_nlcc)) donlcc = .TRUE.
             END IF
 
+            ! frozen core density
+            CALL get_qs_kind(qs_kind_set(ikind), frozen_core=dofc)
+            IF(dofc) THEN
+               NULLIFY (rho_fc,drho_fc,tau_fc)
+               rho_fc => qs_kind_set(ikind)%rho_fc
+               drho_fc => qs_kind_set(ikind)%drho_fc
+               tau_fc => qs_kind_set(ikind)%tau_fc
+            END IF
+
             ! Distribute the atoms of this kind
 
             num_pe = para_env%num_pe
@@ -303,6 +313,10 @@ CONTAINS
                   IF (donlcc) THEN
                      CALL calc_rho_nlcc(grid_atom, nspins, gradient_f, &
                                         ir, rho_nlcc(:, 1), rho_h, rho_s, rho_nlcc(:, 2), drho_h, drho_s)
+                  END IF
+                  IF (dofc) THEN
+                     CALL calc_rho_fc(grid_atom, nspins, gradient_f, tau_f,&
+                                      ir, rho_fc, drho_fc, tau_fc, rho_h, drho_h, tau_h)
                   END IF
                   CALL fill_rho_set(rho_set_h, lsd, nspins, needs, rho_h, drho_h, tau_h, na, ir)
                   CALL fill_rho_set(rho_set_s, lsd, nspins, needs, rho_s, drho_s, tau_s, na, ir)
@@ -974,6 +988,75 @@ CONTAINS
       END IF
 
    END SUBROUTINE calc_rho_nlcc
+
+   SUBROUTINE calc_rho_fc(grid_atom, nspins, gradient_f, tau_f,&
+                          ir, rho_fc, drho_fc, tau_fc, rho_h, drho_h, tau_h)
+
+      TYPE(grid_atom_type), POINTER                      :: grid_atom
+      INTEGER, INTENT(IN)                                :: nspins
+      LOGICAL, INTENT(IN)                                :: gradient_f, tau_f
+      INTEGER, INTENT(IN)                                :: ir
+      REAL(KIND=dp), DIMENSION(:)                        :: rho_fc, drho_fc, tau_fc
+      REAL(KIND=dp), DIMENSION(:, :), POINTER            :: rho_h
+      REAL(KIND=dp), DIMENSION(:, :, :, :), POINTER      :: drho_h
+      REAL(KIND=dp), DIMENSION(:, :), POINTER            :: tau_h
+
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'calc_rho_fc', routineP = moduleN//':'//routineN
+
+      INTEGER                                            :: ia, ispin, na
+      REAL(KIND=dp)                                      :: tau, drho, dx, dy, dz, rad, rho, urad, xsp
+
+      CPASSERT(ASSOCIATED(rho_h))
+      IF (gradient_f) THEN
+         CPASSERT(ASSOCIATED(drho_h))
+      END IF
+      IF (tau_f) THEN
+         CPASSERT(ASSOCIATED(tau_h))
+      END IF
+
+      na = grid_atom%ng_sphere
+      rad = grid_atom%rad(ir)
+      urad = grid_atom%oorad2l(ir, 1)
+
+      xsp = REAL(nspins, KIND=dp)
+      rho = rho_fc(ir)/xsp
+      DO ispin = 1, nspins
+         rho_h(1:na, ispin) = rho_h(1:na, ispin)+rho
+      END DO
+
+      IF (gradient_f) THEN
+         drho = drho_fc(ir)/xsp
+         DO ispin = 1, nspins
+            DO ia = 1, na
+               IF (grid_atom%azi(ia) == 0.0_dp) THEN
+                  dx = 0.0_dp
+                  dy = 0.0_dp
+               ELSE
+                  dx = grid_atom%sin_pol(ia)*grid_atom%sin_azi(ia)
+                  dy = grid_atom%sin_pol(ia)*grid_atom%cos_azi(ia)
+               END IF
+               dz = grid_atom%cos_pol(ia)
+               ! components of the gradient of rho_fc hard
+               drho_h(1, ia, ir, ispin) = drho_h(1, ia, ir, ispin)+drho*dx
+               drho_h(2, ia, ir, ispin) = drho_h(2, ia, ir, ispin)+drho*dy
+               drho_h(3, ia, ir, ispin) = drho_h(3, ia, ir, ispin)+drho*dz
+               ! norm of gradient
+               drho_h(4, ia, ir, ispin) = SQRT( &
+                                          drho_h(1, ia, ir, ispin)*drho_h(1, ia, ir, ispin)+ &
+                                          drho_h(2, ia, ir, ispin)*drho_h(2, ia, ir, ispin)+ &
+                                          drho_h(3, ia, ir, ispin)*drho_h(3, ia, ir, ispin))
+            END DO
+         END DO
+      END IF
+
+      IF (tau_f) THEN
+         tau = tau_fc(ir)/xsp
+         DO ispin = 1, nspins
+            tau_h(1:na, ispin) = tau_h(1:na, ispin)+tau
+         END DO
+      END IF
+
+   END SUBROUTINE calc_rho_fc
 
 ! **************************************************************************************************
 !> \brief ...
