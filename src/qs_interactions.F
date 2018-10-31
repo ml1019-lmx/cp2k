@@ -98,7 +98,7 @@ CONTAINS
       TYPE(all_potential_type), POINTER                  :: all_potential
       TYPE(gth_potential_type), POINTER                  :: gth_potential
       TYPE(gto_basis_set_type), POINTER :: aux_basis_set, aux_fit_basis_set, aux_gw_basis, &
-         harris_basis, lri_basis, mao_basis, orb_basis_set, ri_aux_basis_set, ri_basis, soft_basis
+         harris_basis, lri_basis, mao_basis, orb_basis_set, ri_aux_basis_set, ri_basis, soft_basis, fc_basis
       TYPE(paw_proj_set_type), POINTER                   :: paw_proj_set
       TYPE(sgp_potential_type), POINTER                  :: sgp_potential
 
@@ -117,6 +117,7 @@ CONTAINS
       DO ikind = 1, nkind
 
          CALL get_qs_kind(qs_kind_set(ikind), basis_set=orb_basis_set, basis_type="ORB")
+         CALL get_qs_kind(qs_kind_set(ikind), basis_set=fc_basis, basis_type="FC")
          CALL get_qs_kind(qs_kind_set(ikind), basis_set=aux_basis_set, basis_type="AUX")
          CALL get_qs_kind(qs_kind_set(ikind), basis_set=aux_fit_basis_set, basis_type="AUX_FIT")
          CALL get_qs_kind(qs_kind_set(ikind), basis_set=lri_basis, basis_type="LRI_AUX")
@@ -302,6 +303,11 @@ CONTAINS
          ! Calculate the MAO orbital basis function radii
          IF (ASSOCIATED(mao_basis)) THEN
             CALL init_interaction_radii_orb_basis(mao_basis, qs_control%eps_pgf_orb)
+         END IF
+
+         ! Calculate the Frozen Core orbital basis function radii
+         IF (ASSOCIATED(fc_basis)) THEN
+            CALL init_interaction_radii_orb_basis(fc_basis, qs_control%eps_pgf_orb)
          END IF
 
          ! Calculate the HARRIS orbital basis function radii

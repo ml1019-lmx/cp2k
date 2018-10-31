@@ -132,6 +132,7 @@ MODULE qs_environment
    USE qs_environment_types,            ONLY: get_qs_env,&
                                               qs_environment_type,&
                                               set_qs_env
+   USE qs_fc_methods,                   ONLY: set_fc_kind
    USE qs_force_types,                  ONLY: qs_force_type
    USE qs_interactions,                 ONLY: init_interaction_radii,&
                                               init_se_nlradius,&
@@ -429,7 +430,7 @@ CONTAINS
             nkind = SIZE(atomic_kind_set)
             DO ikind = 1, nkind
                NULLIFY (rtmat)
-               CALL calculate_atomic_relkin(atomic_kind_set(ikind), qs_kind_set(ikind), rel_control, rtmat)
+               CALL calculate_atomic_relkin(qs_kind_set(ikind), rel_control, rtmat)
                IF (ASSOCIATED(rtmat)) CALL set_qs_kind(qs_kind_set(ikind), reltmat=rtmat)
             END DO
          END IF
@@ -471,7 +472,7 @@ CONTAINS
       INTEGER, DIMENSION(2)                              :: n_mo, nelectron_spin
       LOGICAL                                            :: all_potential_present, be_silent, &
                                                             do_kpoints, e1terms, has_unit_metric, &
-                                                            lribas, orb_gradient, was_present
+                                                            lribas, was_present, fc_present
       REAL(dp)                                           :: ewald_rcut, maxocc, verlet_skin
       TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
       TYPE(cp_logger_type), POINTER                      :: logger
@@ -939,6 +940,16 @@ CONTAINS
          CALL semi_empirical_si_create(se_store_int_env, se_section)
          CALL set_qs_env(qs_env, se_store_int_env=se_store_int_env)
       ENDIF
+
+      !   *** Initialise FC basis and densities
+      CALL get_qs_kind_set(qs_kind_set, frozen_core_present=fc_present)
+      IF (fc_present) THEN
+         IF (dft_control%qs_control%method == "GAPW") THEN
+            CALL set_fc_kind(qs_kind_set)
+         ELSE
+            CALL cp_abort(__LOCATION__, "Frozen Core calculation need GAPW method")
+         END IF
+      END IF
 
       !   Initialize possible dispersion parameters
       IF (dft_control%qs_control%method_id == do_method_gpw .OR. &

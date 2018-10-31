@@ -26,8 +26,6 @@ MODULE dkh_main
    USE cp_gemm_interface,               ONLY: cp_gemm
    USE kinds,                           ONLY: dp
    USE physcon,                         ONLY: a_fine
-   USE qs_environment_types,            ONLY: get_qs_env,&
-                                              qs_environment_type
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE
@@ -42,13 +40,13 @@ CONTAINS
 ! **************************************************************************************************
 !> \brief 2th order DKH calculations
 !>
-!> \param qs_env ...
 !> \param matrix_s ...
 !> \param matrix_v ...
 !> \param matrix_t ...
 !> \param matrix_pVp ...
 !> \param n ...
 !> \param dkh_order ...
+!> \param blacs_env ...
 !> \par Literature
 !>  M. Reiher, A. Wolf, J. Chem. Phys. 121 (2004) 10944-10956
 !>  A. Wolf, M. Reiher, B. A. Hess, J. Chem. Phys. 117 (2002) 9215-9226
@@ -96,10 +94,10 @@ CONTAINS
 !>     Markus Reiher: ETH Zurich (09/2006)
 !>
 ! **************************************************************************************************
-   SUBROUTINE DKH_full_transformation(qs_env, matrix_s, matrix_v, matrix_t, matrix_pVp, n, dkh_order)
-      TYPE(qs_environment_type), POINTER                 :: qs_env
+   SUBROUTINE DKH_full_transformation(matrix_s, matrix_v, matrix_t, matrix_pVp, n, dkh_order, blacs_env)
       TYPE(cp_fm_type), POINTER                          :: matrix_s, matrix_v, matrix_t, matrix_pVp
       INTEGER, INTENT(IN)                                :: n, dkh_order
+      TYPE(cp_blacs_env_type), POINTER                   :: blacs_env
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'DKH_full_transformation', &
          routineP = moduleN//':'//routineN
@@ -107,13 +105,11 @@ CONTAINS
       INTEGER                                            :: handle, i
       REAL(KIND=dp)                                      :: velit
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: aa, e, ev0t, rr, tt
-      TYPE(cp_blacs_env_type), POINTER                   :: blacs_env
       TYPE(cp_fm_struct_type), POINTER                   :: matrix_full
       TYPE(cp_fm_type), POINTER :: matrix_aux, matrix_aux2, matrix_eig, matrix_ev1, matrix_ev2, &
          matrix_ev3, matrix_ev4, matrix_pe1p, matrix_rev, matrix_se, matrix_sinv
 
       CALL timeset(routineN, handle)
-      NULLIFY (blacs_env)
       !-----------------------------------------------------------------------
       !     Define velocity of light
       !-----------------------------------------------------------------------
@@ -124,7 +120,6 @@ CONTAINS
       !-----------------------------------------------------------------------
       !     Construct the matrix structure
       !-----------------------------------------------------------------------
-      CALL get_qs_env(qs_env, blacs_env=blacs_env)
       CALL cp_fm_struct_create(fmstruct=matrix_full, &
                                context=blacs_env, &
                                nrow_global=n, &

@@ -2388,9 +2388,9 @@ CONTAINS
                atomic_kind => atomic_kind_set(ikind)
                qs_kind => qs_kind_set(ikind)
                CALL get_atomic_kind(atomic_kind, name=name, element_symbol=element_symbol)
-               CALL calculate_atomic_density(ppdens(:, :, ikind), atomic_kind, qs_kind, ngto, &
+               CALL calculate_atomic_density(ppdens(:, :, ikind), qs_kind, ngto, &
                                              iunit=output_unit, confine=.TRUE.)
-               CALL calculate_atomic_density(aedens(:, :, ikind), atomic_kind, qs_kind, ngto, &
+               CALL calculate_atomic_density(aedens(:, :, ikind), qs_kind, ngto, &
                                              iunit=output_unit, allelectron=.TRUE., confine=.TRUE.)
                ccdens(:, 1, ikind) = aedens(:, 1, ikind)
                ccdens(:, 2, ikind) = 0._dp

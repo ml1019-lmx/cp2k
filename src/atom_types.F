@@ -164,6 +164,7 @@ MODULE atom_types
       REAL(dp)                                      :: acon
       REAL(dp)                                      :: rcon
       REAL(dp)                                      :: scon
+      REAL(dp)                                      :: alpha_core
       TYPE(atom_gthpot_type)                        :: gth_pot
       TYPE(atom_ecppot_type)                        :: ecp_pot
       TYPE(atom_upfpot_type)                        :: upf_pot
@@ -2895,23 +2896,33 @@ CONTAINS
 ! **************************************************************************************************
 !> \brief Initialize the basis for the atomic code from GTO basic info
 !> \param basis ...
+!> \param nset ...
+!> \param lmin ...
+!> \param lmax ...
+!> \param npgf ...
+!> \param nshell ...
+!> \param l ...
+!> \param zet ...
+!> \param gcc ...
+!> \param quadtype ...
+!> \param ngp ...
 ! **************************************************************************************************
-   SUBROUTINE init_atom_basis_cgto(basis,nset,lmin,lmax,npgf,nshell,l,zet,gcc,&
-                                   quadtype,ngp)
+   SUBROUTINE init_atom_basis_cgto(basis, nset, lmin, lmax, npgf, nshell, l, zet, gcc, &
+                                   quadtype, ngp)
       TYPE(atom_basis_type), INTENT(INOUT)               :: basis
       INTEGER, INTENT(IN)                                :: nset
       INTEGER, DIMENSION(:), INTENT(IN)                  :: lmin, lmax, npgf, nshell
-      INTEGER, DIMENSION(:,:), INTENT(IN)                :: l
-      REAL(KIND=dp), DIMENSION(:,:), INTENT(IN)          :: zet
-      REAL(KIND=dp), DIMENSION(:,:,:), INTENT(IN)        :: gcc
+      INTEGER, DIMENSION(:, :), INTENT(IN)               :: l
+      REAL(KIND=dp), DIMENSION(:, :), INTENT(IN)         :: zet
+      REAL(KIND=dp), DIMENSION(:, :, :), INTENT(IN)      :: gcc
       INTEGER, INTENT(IN)                                :: quadtype, ngp
 
       CHARACTER(len=*), PARAMETER :: routineN = 'init_atom_basis_cgto', &
          routineP = moduleN//':'//routineN
-
       INTEGER, PARAMETER                                 :: lmat = 4
-      INTEGER                                            :: i,j,k,nj,ns,ii,ipgf,lx,nr,m
-      REAL(KIND=dp)                                      :: expzet, prefac, gcca, zeta, al, rk, ear
+
+      INTEGER                                            :: i, ii, ipgf, j, k, lx, m, nj, nr, ns
+      REAL(KIND=dp)                                      :: al, ear, expzet, gcca, prefac, rk, zeta
 
       NULLIFY (basis%am, basis%cm, basis%as, basis%ns, basis%bf, basis%dbf, basis%ddbf)
       ! allocate and initialize the atomic grid
@@ -2946,6 +2957,8 @@ CONTAINS
       DO j = 0, lmat
          nj = 0
          ns = 0
+         ! this assumes we have the orbital basis normalization fro the gcc array
+         prefac = 2.0_dp*SQRT(pi/dfac(2*j+1))
          DO i = 1, nset
             IF (j >= lmin(i) .AND. j <= lmax(i)) THEN
                DO ipgf = 1, npgf(i)
@@ -2955,25 +2968,12 @@ CONTAINS
                   IF (l(ii, i) == j) THEN
                      ns = ns+1
                      DO ipgf = 1, npgf(i)
-                        basis%cm(nj+ipgf, ns, j) = gcc(ipgf, ii, i)
+                        basis%cm(nj+ipgf, ns, j) = prefac*gcc(ipgf, ii, i)
                      END DO
                   END IF
                END DO
                nj = nj+npgf(i)
             END IF
-         END DO
-      END DO
-
-      ! Normalization
-      DO j = 0, lmat
-         expzet = 0.25_dp*REAL(2*j+3, dp)
-         prefac = SQRT(SQRT(pi)/2._dp**(j+2)*dfac(2*j+1))
-         DO ipgf = 1, basis%nprim(j)
-            DO ii = 1, basis%nbas(j)
-               gcca = basis%cm(ipgf, ii, j)
-               zeta = 2._dp*basis%am(ipgf, j)
-               basis%cm(ipgf, ii, j) = zeta**expzet*gcca/prefac
-            END DO
          END DO
       END DO
 
@@ -2995,11 +2995,11 @@ CONTAINS
                DO j = 1, basis%nbas(lx)
                   basis%bf(k, j, lx) = basis%bf(k, j, lx)+rk**lx*ear*basis%cm(i, j, lx)
                   basis%dbf(k, j, lx) = basis%dbf(k, j, lx) &
-                                       +(REAL(lx, dp)*rk**(lx-1)-2._dp*al*rk**(lx+1))*ear*basis%cm(i, j, lx)
+                                        +(REAL(lx, dp)*rk**(lx-1)-2._dp*al*rk**(lx+1))*ear*basis%cm(i, j, lx)
                   basis%ddbf(k, j, lx) = basis%ddbf(k, j, lx)+ &
-                                        (REAL(lx*(lx-1), dp)*rk**(lx-2)-2._dp*al* &
-                                         REAL(2*lx+1, dp)*rk**(lx)+4._dp*al*rk**(lx+2))* &
-                                        ear*basis%cm(i, j, lx)
+                                         (REAL(lx*(lx-1), dp)*rk**(lx-2)-2._dp*al* &
+                                          REAL(2*lx+1, dp)*rk**(lx)+4._dp*al*rk**(lx+2))* &
+                                         ear*basis%cm(i, j, lx)
                END DO
             END DO
          END DO

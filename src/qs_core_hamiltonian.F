@@ -78,6 +78,7 @@ MODULE qs_core_hamiltonian
    USE core_ae,                         ONLY: build_core_ae
    USE core_ppl,                        ONLY: build_core_ppl
    USE core_ppnl,                       ONLY: build_core_ppnl
+   USE core_fcnl,                       ONLY: build_core_fcnl
    USE cp_blacs_env,                    ONLY: cp_blacs_env_type
    USE cp_control_types,                ONLY: dft_control_type
    USE cp_dbcsr_cp2k_link,              ONLY: cp_dbcsr_alloc_block_from_nbl
@@ -115,6 +116,7 @@ MODULE qs_core_hamiltonian
                                               set_qs_env
    USE qs_force_types,                  ONLY: qs_force_type
    USE qs_kind_types,                   ONLY: get_qs_kind,&
+                                              get_qs_kind_set,&
                                               qs_kind_type
    USE qs_kinetic,                      ONLY: build_kinetic_matrix
    USE qs_ks_types,                     ONLY: get_ks_env,&
@@ -451,7 +453,7 @@ CONTAINS
       INTEGER                                            :: nimages
       INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
       LOGICAL                                            :: all_present, ppl_present, ppnl_present, &
-                                                            use_virial
+                                                            use_virial, fc_present
       REAL(KIND=dp)                                      :: eps_ppnl
       TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
       TYPE(dft_control_type), POINTER                    :: dft_control
@@ -533,6 +535,14 @@ CONTAINS
       ppnl_present = ASSOCIATED(sap_ppnl)
       IF (ppnl_present) THEN
          CALL build_core_ppnl(matrix_h, matrix_p, force, virial, calculate_forces, use_virial, nder, &
+                              qs_kind_set, atomic_kind_set, particle_set, sab_orb, sap_ppnl, eps_ppnl, &
+                              nimages, cell_to_index, "ORB")
+      END IF
+
+      ! *** Frozen core contributions (use core states as projectors)
+      CALL get_qs_kind_set(qs_kind_set, frozen_core_present=fc_present)
+      IF (fc_present) THEN
+         CALL build_core_fcnl(matrix_h, matrix_p, force, virial, calculate_forces, use_virial, nder, &
                               qs_kind_set, atomic_kind_set, particle_set, sab_orb, sap_ppnl, eps_ppnl, &
                               nimages, cell_to_index, "ORB")
       END IF

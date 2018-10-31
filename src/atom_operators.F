@@ -45,6 +45,7 @@ MODULE atom_operators
 
    PUBLIC :: atom_int_setup, atom_ppint_setup, atom_int_release, atom_ppint_release
    PUBLIC :: atom_relint_setup, atom_relint_release, atom_basis_projection_overlap
+   PUBLIC :: calculate_qskind_integrals
 
 ! **************************************************************************************************
 
@@ -332,22 +333,32 @@ CONTAINS
 !> \param integrals ...
 !> \param basis ...
 !> \param potential ...
+!> \param nolr ...
 ! **************************************************************************************************
-   SUBROUTINE atom_ppint_setup(integrals, basis, potential)
+   SUBROUTINE atom_ppint_setup(integrals, basis, potential, nolr)
       TYPE(atom_integrals), INTENT(INOUT)                :: integrals
       TYPE(atom_basis_type), INTENT(INOUT)               :: basis
       TYPE(atom_potential_type), INTENT(IN)              :: potential
+      LOGICAL, INTENT(IN), OPTIONAL                      :: nolr
 
       CHARACTER(len=*), PARAMETER :: routineN = 'atom_ppint_setup', &
          routineP = moduleN//':'//routineN
 
       INTEGER                                            :: handle, i, ii, j, k, l, m, n
-      REAL(KIND=dp)                                      :: al, alpha, rc
+      LOGICAL                                            :: dolr
+      REAL(KIND=dp)                                      :: ac, al, alpha, rc
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: cpot, xmat
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: omat, spmat
       REAL(KIND=dp), DIMENSION(:), POINTER               :: rad
 
       CALL timeset(routineN, handle)
+
+      dolr = .TRUE.
+      IF (PRESENT(nolr)) THEN
+         dolr = .NOT. nolr
+      END IF
+      ac = 0.0_dp
+      IF (.NOT. dolr) ac = potential%alpha_core
 
       IF (integrals%ppstat == 0) THEN
          n = MAXVAL(basis%nbas)
@@ -375,7 +386,16 @@ CONTAINS
             CASE (no_pseudo, ecp_pseudo)
                DO l = 0, lmat
                   n = integrals%n(l)
-                  CALL sg_nuclear(integrals%core(1:n, 1:n, l), l, basis%am(1:n, l), basis%am(1:n, l))
+                  IF (dolr) THEN
+                     CALL sg_nuclear(integrals%core(1:n, 1:n, l), l, basis%am(1:n, l), basis%am(1:n, l))
+                  ELSE
+                     ALLOCATE (omat(n, n))
+                     CALL sg_nuclear(integrals%core(1:n, 1:n, l), l, basis%am(1:n, l), basis%am(1:n, l))
+                     omat = 0._dp
+                     CALL sg_erf(omat(1:n, 1:n), l, ac, basis%am(1:n, l), basis%am(1:n, l))
+                     integrals%core(1:n, 1:n, l) = integrals%core(1:n, 1:n, l)-omat(1:n, 1:n)
+                     DEALLOCATE (omat)
+                  END IF
                END DO
             CASE (gth_pseudo)
                alpha = 1._dp/potential%gth_pot%rc/SQRT(2._dp)
@@ -384,8 +404,10 @@ CONTAINS
                   ALLOCATE (omat(n, n), spmat(n, 5))
 
                   omat = 0._dp
-                  CALL sg_erf(omat(1:n, 1:n), l, alpha, basis%am(1:n, l), basis%am(1:n, l))
-                  integrals%core(1:n, 1:n, l) = -potential%gth_pot%zion*omat(1:n, 1:n)
+                  IF (dolr) THEN
+                     CALL sg_erf(omat(1:n, 1:n), l, alpha, basis%am(1:n, l), basis%am(1:n, l))
+                     integrals%core(1:n, 1:n, l) = -potential%gth_pot%zion*omat(1:n, 1:n)
+                  END IF
                   DO i = 1, potential%gth_pot%ncl
                      omat = 0._dp
                      CALL sg_gpot(omat(1:n, 1:n), i-1, potential%gth_pot%rc, l, basis%am(1:n, l), basis%am(1:n, l))
@@ -426,9 +448,9 @@ CONTAINS
                   DEALLOCATE (omat, spmat)
                END DO
             CASE (upf_pseudo)
-               CALL upfint_setup(integrals, basis, potential)
+               CALL upfint_setup(integrals, basis, potential, dolr)
             CASE (sgp_pseudo)
-               CALL sgpint_setup(integrals, basis, potential)
+               CALL sgpint_setup(integrals, basis, potential, dolr)
             CASE DEFAULT
                CPABORT("")
             END SELECT
@@ -442,8 +464,15 @@ CONTAINS
                   m = basis%nprim(l)
                   ALLOCATE (omat(m, m))
 
-                  CALL sg_nuclear(omat(1:m, 1:m), l, basis%am(1:m, l), basis%am(1:m, l))
-                  CALL contract2(integrals%core(1:n, 1:n, l), omat(1:m, 1:m), basis%cm(1:m, 1:n, l))
+                  IF (dolr) THEN
+                     CALL sg_nuclear(omat(1:m, 1:m), l, basis%am(1:m, l), basis%am(1:m, l))
+                     CALL contract2(integrals%core(1:n, 1:n, l), omat(1:m, 1:m), basis%cm(1:m, 1:n, l))
+                  ELSE
+                     CALL sg_nuclear(omat(1:m, 1:m), l, basis%am(1:m, l), basis%am(1:m, l))
+                     CALL contract2(integrals%core(1:n, 1:n, l), omat(1:m, 1:m), basis%cm(1:m, 1:n, l))
+                     CALL sg_erf(omat(1:n, 1:n), l, ac, basis%am(1:n, l), basis%am(1:n, l))
+                     CALL contract2add(integrals%core(1:n, 1:n, l), -omat(1:m, 1:m), basis%cm(1:m, 1:n, l))
+                  END IF
 
                   DEALLOCATE (omat)
                END DO
@@ -456,8 +485,10 @@ CONTAINS
                      ALLOCATE (omat(m, m), spmat(n, 5), xmat(m))
 
                      omat = 0._dp
-                     CALL sg_erf(omat(1:m, 1:m), l, alpha, basis%am(1:m, l), basis%am(1:m, l))
-                     omat(1:m, 1:m) = -potential%gth_pot%zion*omat(1:m, 1:m)
+                     IF (dolr) THEN
+                        CALL sg_erf(omat(1:m, 1:m), l, alpha, basis%am(1:m, l), basis%am(1:m, l))
+                        omat(1:m, 1:m) = -potential%gth_pot%zion*omat(1:m, 1:m)
+                     END IF
                      CALL contract2(integrals%core(1:n, 1:n, l), omat(1:m, 1:m), basis%cm(1:m, 1:n, l))
                      DO i = 1, potential%gth_pot%ncl
                         omat = 0._dp
@@ -503,14 +534,16 @@ CONTAINS
                   END IF
                END DO
             CASE (upf_pseudo)
-               CALL upfint_setup(integrals, basis, potential)
+               CALL upfint_setup(integrals, basis, potential, dolr)
             CASE (sgp_pseudo)
-               CALL sgpint_setup(integrals, basis, potential)
+               CALL sgpint_setup(integrals, basis, potential, dolr)
             CASE DEFAULT
                CPABORT("")
             END SELECT
 
          CASE (STO_BASIS)
+
+            CPASSERT(dolr)
 
             SELECT CASE (potential%ppot_type)
             CASE (no_pseudo, ecp_pseudo)
@@ -588,9 +621,9 @@ CONTAINS
                DEALLOCATE (cpot)
 
             CASE (upf_pseudo)
-               CALL upfint_setup(integrals, basis, potential)
+               CALL upfint_setup(integrals, basis, potential, dolr)
             CASE (sgp_pseudo)
-               CALL sgpint_setup(integrals, basis, potential)
+               CALL sgpint_setup(integrals, basis, potential, dolr)
             CASE DEFAULT
                CPABORT("")
             END SELECT
@@ -642,16 +675,19 @@ CONTAINS
 !> \param integrals ...
 !> \param basis ...
 !> \param potential ...
+!> \param dolr ...
 ! **************************************************************************************************
-   SUBROUTINE upfint_setup(integrals, basis, potential)
+   SUBROUTINE upfint_setup(integrals, basis, potential, dolr)
       TYPE(atom_integrals), INTENT(INOUT)                :: integrals
       TYPE(atom_basis_type), INTENT(INOUT)               :: basis
       TYPE(atom_potential_type), INTENT(IN)              :: potential
+      LOGICAL, INTENT(IN)                                :: dolr
 
       CHARACTER(len=*), PARAMETER :: routineN = 'upfint_setup', routineP = moduleN//':'//routineN
 
       CHARACTER(len=4)                                   :: ptype
       INTEGER                                            :: i, j, k1, k2, la, lb, m, n
+      REAL(KIND=dp)                                      :: ac, zcore
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: spot
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: spmat
       TYPE(atom_basis_type)                              :: gbasis
@@ -661,7 +697,23 @@ CONTAINS
 
       ! local pseudopotential
       integrals%core = 0._dp
-      CALL numpot_matrix(integrals%core, potential%upf_pot%vlocal, gbasis, 0)
+      IF (dolr) THEN
+         CALL numpot_matrix(integrals%core, potential%upf_pot%vlocal, gbasis, 0)
+      ELSE
+         zcore = potential%upf_pot%zion
+         ac = potential%alpha_core
+         n = SIZE(potential%upf_pot%vlocal)
+         ALLOCATE (spot(n))
+         DO i = 1, n
+            IF (potential%upf_pot%r(i) > 1.e-12_dp) THEN
+               spot(1:n) = potential%upf_pot%vlocal(i)-zcore*ERF(ac*potential%upf_pot%r(i))/potential%upf_pot%r(i)
+            ELSE
+               spot(1:n) = potential%upf_pot%vlocal(i)-zcore
+            END IF
+         END DO
+         CALL numpot_matrix(integrals%core, spot, gbasis, 0)
+         DEALLOCATE (spot)
+      END IF
 
       ptype = ADJUSTL(TRIM(potential%upf_pot%pseudo_type))
       IF (ptype(1:2) == "NC" .OR. ptype(1:2) == "US") THEN
@@ -722,11 +774,13 @@ CONTAINS
 !> \param integrals ...
 !> \param basis ...
 !> \param potential ...
+!> \param dolr ...
 ! **************************************************************************************************
-   SUBROUTINE sgpint_setup(integrals, basis, potential)
+   SUBROUTINE sgpint_setup(integrals, basis, potential, dolr)
       TYPE(atom_integrals), INTENT(INOUT)                :: integrals
       TYPE(atom_basis_type), INTENT(INOUT)               :: basis
       TYPE(atom_potential_type), INTENT(IN)              :: potential
+      LOGICAL, INTENT(IN)                                :: dolr
 
       CHARACTER(len=*), PARAMETER :: routineN = 'sgpint_setup', routineP = moduleN//':'//routineN
 
@@ -744,10 +798,12 @@ CONTAINS
       ALLOCATE (cpot(m))
       cpot = 0.0_dp
       zval = potential%sgp_pot%zion
-      DO i = 1, m
-         rc = rad(i)/potential%sgp_pot%ac_local/SQRT(2.0_dp)
-         cpot(i) = cpot(i)-zval/rad(i)*erf(rc)
-      END DO
+      IF (dolr) THEN
+         DO i = 1, m
+            rc = rad(i)/potential%sgp_pot%ac_local/SQRT(2.0_dp)
+            cpot(i) = cpot(i)-zval/rad(i)*erf(rc)
+         END DO
+      END IF
       DO i = 1, potential%sgp_pot%n_local
          cpot(:) = cpot(:)+potential%sgp_pot%c_local(i)*EXP(-potential%sgp_pot%a_local(i)*rad(:)**2)
       END DO
@@ -1245,6 +1301,36 @@ CONTAINS
       DEALLOCATE (rho, pot)
 
    END SUBROUTINE calculate_model_potential
+! **************************************************************************************************
+!> \brief ...
+!> \param integrals ...
+!> \param basis ...
+!> \param potential ...
+!> \param zcore ...
+! **************************************************************************************************
+   SUBROUTINE calculate_qskind_integrals(integrals, basis, potential, zcore)
+      TYPE(atom_integrals), INTENT(INOUT)                :: integrals
+      TYPE(atom_basis_type), INTENT(INOUT)               :: basis
+      TYPE(atom_potential_type), INTENT(IN)              :: potential
+      REAL(KIND=dp), INTENT(IN)                          :: zcore
+
+      CHARACTER(len=*), PARAMETER :: routineN = 'calculate_qskind_integrals', &
+         routineP = moduleN//':'//routineN
+
+      ! calculate integrals for QS Hcore
+      ! ovlp, kin integrals
+      CALL atom_int_setup(integrals, basis)
+      ! potential (don't add long-range part of Z/r)
+      CALL atom_ppint_setup(integrals, basis, potential, nolr=.TRUE.)
+      ! relativistic correction terms
+      IF (potential%ppot_type == NO_PSEUDO) THEN
+         ! add ZORA scaled model potential
+         NULLIFY (integrals%tzora)
+         CALL atom_relint_setup(integrals, basis, do_sczoramp_atom, zcore=zcore)
+         integrals%kin = integrals%kin+integrals%tzora
+      END IF
+
+   END SUBROUTINE calculate_qskind_integrals
 ! **************************************************************************************************
 
 END MODULE atom_operators

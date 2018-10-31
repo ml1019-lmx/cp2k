@@ -15,7 +15,8 @@ MODULE atom_kind_orbitals
                                               atom_ppint_release,&
                                               atom_ppint_setup,&
                                               atom_relint_release,&
-                                              atom_relint_setup
+                                              atom_relint_setup,&
+                                              calculate_qskind_integrals
    USE atom_types,                      ONLY: &
         CGTO_BASIS, Clementi_geobas, GTO_BASIS, atom_basis_type, atom_gthpot_type, atom_integrals, &
         atom_orbitals, atom_potential_type, atom_sgppot_type, atom_type, create_atom_orbs, &
@@ -41,7 +42,8 @@ MODULE atom_kind_orbitals
    USE kinds,                           ONLY: dp
    USE mathconstants,                   ONLY: dfac,&
                                               pi
-   USE periodic_table,                  ONLY: ptable
+   USE periodic_table,                  ONLY: get_ptable_info,&
+                                              ptable
    USE physcon,                         ONLY: bohr
    USE qs_grid_atom,                    ONLY: allocate_grid_atom,&
                                               create_grid_atom,&
@@ -71,7 +73,7 @@ MODULE atom_kind_orbitals
                                                         341890134.751331_dp/)
 
    PUBLIC :: calculate_atomic_orbitals, calculate_atomic_density, &
-             calculate_atomic_relkin, gth_potential_conversion
+             calculate_atomic_relkin, gth_potential_conversion, calculate_atomic_energies
 
 ! **************************************************************************************************
 
@@ -555,16 +557,14 @@ CONTAINS
 ! **************************************************************************************************
 !> \brief ...
 !> \param density ...
-!> \param atomic_kind ...
 !> \param qs_kind ...
 !> \param ngto ...
 !> \param iunit ...
 !> \param allelectron ...
 !> \param confine ...
 ! **************************************************************************************************
-   SUBROUTINE calculate_atomic_density(density, atomic_kind, qs_kind, ngto, iunit, allelectron, confine)
+   SUBROUTINE calculate_atomic_density(density, qs_kind, ngto, iunit, allelectron, confine)
       REAL(KIND=dp), DIMENSION(:, :), INTENT(INOUT)      :: density
-      TYPE(atomic_kind_type), POINTER                    :: atomic_kind
       TYPE(qs_kind_type), POINTER                        :: qs_kind
       INTEGER, INTENT(IN)                                :: ngto
       INTEGER, INTENT(IN), OPTIONAL                      :: iunit
@@ -594,7 +594,7 @@ CONTAINS
       NULLIFY (atom)
       CALL create_atom_type(atom)
 
-      CALL get_atomic_kind(atomic_kind, z=z)
+      CALL get_ptable_info(qs_kind%element_symbol, ielement=z)
       NULLIFY (all_potential, gth_potential)
       CALL get_qs_kind(qs_kind, zeff=zeff, &
                        all_potential=all_potential, &
@@ -825,13 +825,11 @@ CONTAINS
 
 ! **************************************************************************************************
 !> \brief ...
-!> \param atomic_kind ...
 !> \param qs_kind ...
 !> \param rel_control ...
 !> \param rtmat ...
 ! **************************************************************************************************
-   SUBROUTINE calculate_atomic_relkin(atomic_kind, qs_kind, rel_control, rtmat)
-      TYPE(atomic_kind_type), INTENT(IN)                 :: atomic_kind
+   SUBROUTINE calculate_atomic_relkin(qs_kind, rel_control, rtmat)
       TYPE(qs_kind_type), INTENT(IN)                     :: qs_kind
       TYPE(rel_control_type), POINTER                    :: rel_control
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: rtmat
@@ -868,7 +866,7 @@ CONTAINS
       IF (ASSOCIATED(all_potential)) THEN
          ! only all electron atoms will get the relativistic correction
 
-         CALL get_atomic_kind(atomic_kind, z=z)
+         CALL get_ptable_info(qs_kind%element_symbol, ielement=z)
          CALL get_qs_kind(qs_kind, zeff=zeff)
          NULLIFY (atom)
          CALL create_atom_type(atom)
@@ -1334,6 +1332,153 @@ CONTAINS
       END IF
 
    END SUBROUTINE sgp_potential_conversion
+
+! **************************************************************************************************
+!> \brief ...
+!> \param qs_kind ...
+!> \param basis ...
+!> \param pmat ...
+!> \param ekin ...
+!> \param ecore ...
+!> \param exchange ...
+!> \param hshift ...
+!> \param ortho ...
+! **************************************************************************************************
+   SUBROUTINE calculate_atomic_energies(qs_kind, basis, pmat, ekin, ecore, exchange, hshift, ortho)
+      TYPE(qs_kind_type), INTENT(IN)                     :: qs_kind
+      TYPE(atom_basis_type), INTENT(INOUT)               :: basis
+      REAL(KIND=dp), DIMENSION(:, :, 0:), INTENT(IN), &
+         OPTIONAL                                        :: pmat
+      REAL(KIND=dp), INTENT(OUT), OPTIONAL               :: ekin, ecore, exchange
+      REAL(KIND=dp), DIMENSION(:, 0:), INTENT(INOUT), &
+         OPTIONAL                                        :: hshift
+      REAL(KIND=dp), INTENT(OUT), OPTIONAL               :: ortho
+
+      CHARACTER(len=*), PARAMETER :: routineN = 'calculate_atomic_energies', &
+         routineP = moduleN//':'//routineN
+
+      CHARACTER(LEN=2)                                   :: element_symbol
+      INTEGER                                            :: i, j, l, z
+      REAL(KIND=dp)                                      :: acore, ob, od, zeff
+      TYPE(all_potential_type), POINTER                  :: all_potential
+      TYPE(atom_integrals), POINTER                      :: integrals
+      TYPE(atom_potential_type), POINTER                 :: potential
+      TYPE(atom_type), POINTER                           :: atom
+      TYPE(gth_potential_type), POINTER                  :: gth_potential
+      TYPE(sgp_potential_type), POINTER                  :: sgp_potential
+
+      NULLIFY (atom)
+      CALL create_atom_type(atom)
+
+      NULLIFY (all_potential, gth_potential, sgp_potential)
+      CALL get_qs_kind(qs_kind, zeff=zeff, &
+                       element_symbol=element_symbol, &
+                       all_potential=all_potential, &
+                       gth_potential=gth_potential, &
+                       sgp_potential=sgp_potential)
+
+      CALL get_ptable_info(element_symbol, ielement=z)
+      atom%z = z
+      CALL set_atom(atom, &
+                    pp_calc=(ASSOCIATED(gth_potential) .OR. ASSOCIATED(sgp_potential)), &
+                    do_zmp=.FALSE., doread=.FALSE., read_vxc=.FALSE., &
+                    relativistic=do_nonrel_atom, &
+                    coulomb_integral_type=do_numeric, &
+                    exchange_integral_type=do_numeric)
+
+      ALLOCATE (potential, integrals)
+
+      IF (ASSOCIATED(gth_potential)) THEN
+         potential%ppot_type = gth_pseudo
+         CALL get_potential(gth_potential, zeff=zeff, alpha_core_charge=acore)
+         potential%alpha_core = acore
+         CALL gth_potential_conversion(gth_potential, potential%gth_pot)
+         CALL set_atom(atom, zcore=NINT(zeff), potential=potential)
+      ELSE IF (ASSOCIATED(sgp_potential)) THEN
+         potential%ppot_type = sgp_pseudo
+         CALL get_potential(sgp_potential, alpha_core_charge=acore)
+         potential%alpha_core = acore
+         CALL sgp_potential_conversion(sgp_potential, potential%sgp_pot)
+         potential%sgp_pot%symbol = ptable(z)%symbol
+         CALL get_potential(sgp_potential, zeff=zeff)
+         CALL set_atom(atom, zcore=NINT(zeff), potential=potential)
+      ELSE IF (ASSOCIATED(all_potential)) THEN
+         potential%ppot_type = no_pseudo
+         CALL get_potential(all_potential, alpha_core_charge=acore)
+         potential%alpha_core = acore
+         CALL set_atom(atom, zcore=z, potential=potential)
+      ELSE
+         potential%ppot_type = no_pseudo
+         potential%alpha_core = 0.0_dp
+         CALL set_atom(atom, zcore=z, potential=potential)
+      END IF
+
+      ! calculate integrals
+      CALL calculate_qskind_integrals(integrals, basis, potential, REAL(z, KIND=dp))
+      IF (ASSOCIATED(all_potential)) THEN
+         integrals%core = -REAL(z, KIND=dp)*integrals%core
+      END IF
+
+      IF (PRESENT(ortho)) THEN
+         ! diagonal density matrix, check for orthogonal basis
+         ob = 0.0_dp
+         od = 0.0_dp
+         DO l = 0, UBOUND(basis%nbas, 1)
+            od = od+basis%nbas(l)
+            DO i = 1, basis%nbas(l)
+               DO j = 1, basis%nbas(l)
+                  IF (i == j) THEN
+                     ob = ob+ABS(integrals%ovlp(i, j, l)-1.0_dp)
+                  ELSE
+                     ob = ob+ABS(integrals%ovlp(i, j, l))
+                  END IF
+               END DO
+            END DO
+         END DO
+         ortho = ob/od
+      END IF
+
+      IF (PRESENT(ekin)) THEN
+         CPASSERT(PRESENT(pmat))
+         ekin = 0.0_dp
+         DO l = 0, 3
+            ekin = ekin+SUM(integrals%kin(:, :, l)*pmat(:, :, l))
+         END DO
+      END IF
+
+      IF (PRESENT(ecore)) THEN
+         CPASSERT(PRESENT(pmat))
+         ecore = 0.0_dp
+         DO l = 0, 3
+            ecore = ecore+SUM(integrals%core(:, :, l)*pmat(:, :, l))
+         END DO
+      END IF
+
+      IF (PRESENT(exchange)) THEN
+         CPASSERT(PRESENT(pmat))
+         CPABORT("EXCHANGE FOR FC not available")
+      END IF
+
+      IF (PRESENT(hshift)) THEN
+         hshift = 0.0_dp
+         DO l = 0, 3
+            DO i = 1, basis%nbas(l)
+               hshift(i, l) = integrals%kin(i, i, l)
+            END DO
+         END DO
+      END IF
+
+      ! clean up
+      CALL atom_int_release(integrals)
+      CALL atom_ppint_release(integrals)
+      CALL atom_relint_release(integrals)
+      CALL release_atom_potential(potential)
+      CALL release_atom_type(atom)
+
+      DEALLOCATE (potential, integrals)
+
+   END SUBROUTINE calculate_atomic_energies
+
 ! **************************************************************************************************
 
 END MODULE atom_kind_orbitals

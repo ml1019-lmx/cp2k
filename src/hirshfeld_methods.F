@@ -210,8 +210,7 @@ CONTAINS
          DO ikind = 1, nkind
             atomic_kind => atomic_kind_set(ikind)
             qs_kind => qs_kind_set(ikind)
-            CALL calculate_atomic_density(ppdens(:, :), atomic_kind, qs_kind, ngto, &
-                                          confine=.FALSE.)
+            CALL calculate_atomic_density(ppdens(:, :), qs_kind, ngto, confine=.FALSE.)
             hirshfeld_env%kind_shape_fn(ikind)%numexp = ngto
             ALLOCATE (hirshfeld_env%kind_shape_fn(ikind)%zet(ngto))
             ALLOCATE (hirshfeld_env%kind_shape_fn(ikind)%coef(ngto))
