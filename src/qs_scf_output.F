@@ -414,6 +414,9 @@ CONTAINS
                WRITE (UNIT=output_unit, FMT="(/,(T3,A,T56,F25.14))") &
                   "GAPW| Exc from hard and soft atomic rho1:      ", energy%exc1, &
                   "GAPW| local Eh = 1 center integrals:           ", energy%hartree_1c
+               IF (energy%efc /= 0.0_dp) &
+                  WRITE (UNIT=output_unit, FMT="(T3,A,T56,F25.14)") &
+                  "Frozen core atomic energy:                     ", energy%efc
             END IF
             IF (gapw_xc) THEN
                WRITE (UNIT=output_unit, FMT="(/,(T3,A,T56,F25.14))") &

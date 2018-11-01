@@ -297,16 +297,16 @@ CONTAINS
       CHARACTER(LEN=default_string_length)               :: print_key_path
       INTEGER                                            :: handle, ikind, iw, maxatom, nkind, &
                                                             numshells, zat
-      LOGICAL :: all_potential_present, almo, dftb, do_hfx, dokp, explicit, gth_potential_present, &
-         lri_optbas, lrigpw, mic, molecule_only, nddo, paw_atom, paw_atom_present, rigpw, &
-         sgp_potential_present
+      LOGICAL :: all_potential_present, almo, dftb, do_fc, do_hfx, dokp, explicit, frozen_core, &
+         gth_potential_present, lri_optbas, lrigpw, mic, molecule_only, nddo, paw_atom, &
+         paw_atom_present, rigpw, sgp_potential_present
       LOGICAL, ALLOCATABLE, DIMENSION(:) :: all_present, aux_fit_present, aux_present, &
-         core_present, default_present, oce_present, orb_present, ppl_present, ppnl_present, &
-         ri_present
+         core_present, default_present, fc_present, oce_present, orb_present, ppl_present, &
+         ppnl_present, ri_present
       REAL(dp)                                           :: almo_rcov, almo_rvdw, alpha, roperator, &
                                                             subcells
       REAL(dp), ALLOCATABLE, DIMENSION(:) :: all_pot_rad, aux_fit_radius, c_radius, calpha, &
-         core_radius, oce_radius, orb_radius, ppl_radius, ppnl_radius, ri_radius, zeff
+         core_radius, fc_radius, oce_radius, orb_radius, ppl_radius, ppnl_radius, ri_radius, zeff
       REAL(dp), ALLOCATABLE, DIMENSION(:, :)             :: pair_radius
       TYPE(all_potential_type), POINTER                  :: all_potential
       TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
@@ -318,14 +318,15 @@ CONTAINS
       TYPE(ewald_environment_type), POINTER              :: ewald_env
       TYPE(gth_potential_type), POINTER                  :: gth_potential
       TYPE(gto_basis_set_type), POINTER                  :: aux_basis_set, aux_fit_basis_set, &
-                                                            orb_basis_set, ri_basis_set
+                                                            fc_basis_set, orb_basis_set, &
+                                                            ri_basis_set
       TYPE(kpoint_type), POINTER                         :: kpoints
       TYPE(local_atoms_type), ALLOCATABLE, DIMENSION(:)  :: atom2d
       TYPE(molecule_type), DIMENSION(:), POINTER         :: molecule_set
       TYPE(neighbor_list_set_p_type), DIMENSION(:), POINTER :: saa_list, sab_all, sab_almo, &
          sab_aux_fit, sab_aux_fit_asymm, sab_aux_fit_vs_orb, sab_cn, sab_core, sab_kp, sab_lrc, &
-         sab_orb, sab_scp, sab_se, sab_tbe, sab_vdw, sac_ae, sac_lri, sac_ppl, sap_oce, sap_ppnl, &
-         soa_list, soo_list
+         sab_orb, sab_scp, sab_se, sab_tbe, sab_vdw, sac_ae, sac_fc, sac_lri, sac_ppl, sap_oce, &
+         sap_ppnl, soa_list, soo_list
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       TYPE(paw_proj_set_type), POINTER                   :: paw_proj
       TYPE(qs_dftb_atom_type), POINTER                   :: dftb_atom
@@ -348,6 +349,7 @@ CONTAINS
       NULLIFY (sac_ppl)
       NULLIFY (sac_lri)
       NULLIFY (sap_ppnl)
+      NULLIFY (sac_fc)
       NULLIFY (sap_oce)
       NULLIFY (sab_se)
       NULLIFY (sab_lrc)
@@ -392,6 +394,7 @@ CONTAINS
                       sac_lri=sac_lri, &
                       sab_vdw=sab_vdw, &
                       sap_ppnl=sap_ppnl, &
+                      sac_fc=sac_fc, &
                       sap_oce=sap_oce, &
                       sab_se=sab_se, &
                       sab_lrc=sab_lrc, &
@@ -418,7 +421,6 @@ CONTAINS
       IF (dokp) THEN
          ! no MIC for kpoints
          mic = .FALSE.
-!deb  ELSEIF (nddo .OR. dftb) THEN
       ELSEIF (nddo) THEN
          ! enforce MIC for interaction lists in SE and DFTB
          mic = .TRUE.
@@ -428,7 +430,9 @@ CONTAINS
       CALL section_vals_get(hfx_sections, explicit=do_hfx)
 
       CALL get_atomic_kind_set(atomic_kind_set, maxatom=maxatom)
-      CALL get_qs_kind_set(qs_kind_set, paw_atom_present=paw_atom_present, &
+      CALL get_qs_kind_set(qs_kind_set, &
+                           paw_atom_present=paw_atom_present, &
+                           frozen_core_present=do_fc, &
                            gth_potential_present=gth_potential_present, &
                            sgp_potential_present=sgp_potential_present, &
                            all_potential_present=all_potential_present)
@@ -448,7 +452,6 @@ CONTAINS
       calpha(:) = 0.0_dp
       zeff(:) = 0.0_dp
 
-      ALLOCATE (pair_radius(nkind, nkind))
       IF (gth_potential_present .OR. sgp_potential_present) THEN
          ALLOCATE (ppl_present(nkind), ppl_radius(nkind))
          ppl_radius = 0.0_dp
@@ -463,6 +466,12 @@ CONTAINS
          ALLOCATE (all_present(nkind), all_pot_rad(nkind))
          all_pot_rad = 0.0_dp
       END IF
+      IF (do_fc) THEN
+         ALLOCATE (fc_present(nkind), fc_radius(nkind))
+         fc_radius = 0.0_dp
+      END IF
+
+      ALLOCATE (pair_radius(nkind, nkind))
 
       ! Initialize the local data structures
       ALLOCATE (atom2d(nkind))
@@ -551,6 +560,18 @@ CONTAINS
                CALL get_paw_proj_set(paw_proj_set=paw_proj, rcprj=oce_radius(ikind))
             ELSE
                oce_present(ikind) = .FALSE.
+            END IF
+         END IF
+
+         ! frozen core
+         IF (do_fc) THEN
+            CALL get_qs_kind(qs_kind_set(ikind), frozen_core=frozen_core)
+            IF (frozen_core) THEN
+               fc_present(ikind) = .TRUE.
+               CALL get_qs_kind(qs_kind_set(ikind), basis_set=fc_basis_set, basis_type="FC")
+               CALL get_gto_basis_set(gto_basis_set=fc_basis_set, kind_radius=fc_radius(ikind))
+            ELSE
+               fc_present(ikind) = .FALSE.
             END IF
          END IF
 
@@ -704,6 +725,19 @@ CONTAINS
             CALL set_ks_env(ks_env=ks_env, sac_ae=sac_ae)
             CALL write_neighbor_lists(sac_ae, particle_set, cell, para_env, neighbor_list_section, &
                                       "/SAC_AE", "sac_ae", "ORBITAL ERFC POTENTIAL")
+         END IF
+      END IF
+
+      ! Build Frozen core list
+      IF (do_fc) THEN
+         ! Build orbital-GAPW projector overlap list
+         IF (ANY(oce_present)) THEN
+            CALL pair_radius_setup(orb_present, fc_present, orb_radius, fc_radius, pair_radius)
+            CALL build_neighbor_lists(sac_fc, particle_set, atom2d, cell, pair_radius, &
+                                      subcells=subcells, operator_type="ABBA", nlname="sac_fc")
+            CALL set_ks_env(ks_env=ks_env, sac_fc=sac_fc)
+            CALL write_neighbor_lists(sac_fc, particle_set, cell, para_env, neighbor_list_section, &
+                                      "/SAC_FC", "sac_fc", "ORBITAL(A) FC ORBITAL(B)")
          END IF
       END IF
 

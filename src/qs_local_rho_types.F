@@ -109,7 +109,7 @@ CONTAINS
 
       INTEGER                                            :: ir, na, nr
       REAL(dp)                                           :: c1, c2, c3, prefactor1, prefactor2, &
-                                                            prefactor3, sum
+                                                            prefactor3, sumq
 
       nr = grid_atom%nr
       na = grid_atom%ng_sphere
@@ -124,7 +124,7 @@ CONTAINS
       prefactor2 = -2.0_dp*alpha
       prefactor3 = -zeff*SQRT(fourpi)
 
-      sum = 0.0_dp
+      sumq = 0.0_dp
       DO ir = 1, nr
          c1 = -alpha*grid_atom%rad2(ir)
          rhoz%r_coef(ir) = -EXP(c1)*prefactor1
@@ -135,10 +135,15 @@ CONTAINS
             rhoz%dr_coef(ir) = prefactor2*rhoz%r_coef(ir)
          END IF
          rhoz%vr_coef(ir) = prefactor3*erf(grid_atom%rad(ir)*c3)/grid_atom%rad(ir)
-         sum = sum+rhoz%r_coef(ir)*grid_atom%wr(ir)
+         sumq = sumq+rhoz%r_coef(ir)*grid_atom%wr(ir)
       END DO
-      rhoz%one_atom = sum*harmonics%slm_int(1)
+      rhoz%one_atom = sumq*harmonics%slm_int(1)
       rhoz_tot = rhoz_tot+natom*rhoz%one_atom
+!deb
+      WRITE (6, *) "FC RHOZ 1 ", SUM(rhoz%r_coef(1:nr)*grid_atom%wr(1:nr))
+      WRITE (6, *) "FC RHOZ 2 ", sumq, rhoz%one_atom, rhoz_tot
+      WRITE (6, *) "FC RHOZ 3 ", harmonics%slm_int(1)
+!deb
 
    END SUBROUTINE calculate_rhoz
 

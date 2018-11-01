@@ -132,7 +132,8 @@ MODULE qs_environment
    USE qs_environment_types,            ONLY: get_qs_env,&
                                               qs_environment_type,&
                                               set_qs_env
-   USE qs_fc_methods,                   ONLY: set_fc_kind
+   USE qs_fc_methods,                   ONLY: set_fc_kind,&
+                                              set_fc_rho0
    USE qs_force_types,                  ONLY: qs_force_type
    USE qs_interactions,                 ONLY: init_interaction_radii,&
                                               init_se_nlradius,&
@@ -946,6 +947,7 @@ CONTAINS
       IF (fc_present) THEN
          IF (dft_control%qs_control%method == "GAPW") THEN
             CALL set_fc_kind(qs_kind_set)
+            CALL set_fc_rho0(qs_env)
          ELSE
             CALL cp_abort(__LOCATION__, "Frozen Core calculation need GAPW method")
          END IF

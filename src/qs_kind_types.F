@@ -166,8 +166,10 @@ MODULE qs_kind_types
       TYPE(paw_proj_set_type), POINTER       :: paw_proj_set => Null()
       !
       LOGICAL                                :: frozen_core = .FALSE.
+      REAL(dp)                               :: zcore = 0._dp
       REAL(dp)                               :: efc = 0._dp
-      REAL(KIND=dp), DIMENSION(:, :), POINTER :: hshift => Null()
+      REAL(KIND=dp), DIMENSION(:, :), &
+         POINTER                             :: hshift => Null()
       REAL(KIND=dp), DIMENSION(:), POINTER   :: rho_fc => Null()
       REAL(KIND=dp), DIMENSION(:), POINTER   :: drho_fc => Null()
       REAL(KIND=dp), DIMENSION(:), POINTER   :: tau_fc => Null()
@@ -432,7 +434,7 @@ CONTAINS
                           dftb3_param, zeff, elec_conf, mao, lmax_dftb, &
                           alpha_core_charge, ccore_charge, core_charge, core_charge_radius, &
                           soft_basis_set, hard_basis_set, paw_proj_set, softb, &
-                          frozen_core, efc, paw_atom, hard_radius, hard0_radius, max_rad_local, &
+                          frozen_core, zcore, efc, paw_atom, hard_radius, hard0_radius, max_rad_local, &
                           gpw_type_forced, harmonics, max_iso_not0, max_s_harm, grid_atom, &
                           ngrid_ang, ngrid_rad, lmax_rho0, &
                           dft_plus_u_atom, l_of_dft_plus_u, u_minus_j, dispersion, &
@@ -461,6 +463,7 @@ CONTAINS
       TYPE(paw_proj_set_type), OPTIONAL, POINTER         :: paw_proj_set
       LOGICAL, INTENT(IN), OPTIONAL                      :: softb
       LOGICAL, INTENT(OUT), OPTIONAL                     :: frozen_core
+      REAL(KIND=dp), INTENT(OUT), OPTIONAL               :: zcore
       REAL(KIND=dp), INTENT(OUT), OPTIONAL               :: efc
       LOGICAL, INTENT(OUT), OPTIONAL                     :: paw_atom
       REAL(dp), INTENT(OUT), OPTIONAL                    :: hard_radius, hard0_radius, max_rad_local
@@ -644,6 +647,7 @@ CONTAINS
       IF (PRESENT(paw_atom)) paw_atom = qs_kind%paw_atom
       IF (PRESENT(frozen_core)) frozen_core = qs_kind%frozen_core
       IF (PRESENT(efc)) efc = qs_kind%efc
+      IF (PRESENT(zcore)) zcore = qs_kind%zcore
       IF (PRESENT(gpw_type_forced)) gpw_type_forced = qs_kind%gpw_type_forced
       IF (PRESENT(hard_radius)) hard_radius = qs_kind%hard_radius
       IF (PRESENT(hard0_radius)) hard0_radius = qs_kind%hard0_radius
@@ -2522,7 +2526,7 @@ CONTAINS
    SUBROUTINE set_qs_kind(qs_kind, paw_atom, ghost, floating, hard_radius, hard0_radius, &
                           soft_basis_set, hard_basis_set, lmax_rho0, zeff, &
                           no_optimize, dispersion, u_minus_j, reltmat, &
-                          dftb_parameter, frozen_core, efc, &
+                          dftb_parameter, frozen_core, zcore, efc, &
                           elec_conf, pao_basis_size)
 
       TYPE(qs_kind_type), INTENT(INOUT)                  :: qs_kind
@@ -2537,6 +2541,7 @@ CONTAINS
       REAL(KIND=dp), DIMENSION(:, :), OPTIONAL, POINTER  :: reltmat
       TYPE(qs_dftb_atom_type), OPTIONAL, POINTER         :: dftb_parameter
       LOGICAL, INTENT(IN), OPTIONAL                      :: frozen_core
+      REAL(KIND=dp), INTENT(IN), OPTIONAL                :: zcore
       REAL(KIND=dp), INTENT(IN), OPTIONAL                :: efc
       INTEGER, DIMENSION(:), INTENT(IN), OPTIONAL        :: elec_conf
       INTEGER, INTENT(IN), OPTIONAL                      :: pao_basis_size
@@ -2585,6 +2590,7 @@ CONTAINS
       IF (PRESENT(pao_basis_size)) qs_kind%pao_basis_size = pao_basis_size
 
       IF (PRESENT(frozen_core)) qs_kind%frozen_core = frozen_core
+      IF (PRESENT(zcore)) qs_kind%zcore = zcore
       IF (PRESENT(efc)) qs_kind%efc = efc
 
    END SUBROUTINE set_qs_kind
