@@ -460,7 +460,8 @@ CONTAINS
       TYPE(kpoint_type), POINTER                         :: kpoints
       TYPE(lri_environment_type), POINTER                :: lri_env
       TYPE(neighbor_list_set_p_type), DIMENSION(:), &
-         POINTER                                         :: sab_orb, sac_ae, sac_ppl, sap_ppnl
+         POINTER                                         :: sab_orb, sac_ae, sac_fc, sac_ppl, &
+                                                            sap_ppnl
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       TYPE(qs_force_type), DIMENSION(:), POINTER         :: force
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
@@ -493,10 +494,11 @@ CONTAINS
       CALL get_qs_env(qs_env=qs_env, qs_kind_set=qs_kind_set, atomic_kind_set=atomic_kind_set, &
                       particle_set=particle_set)
 
-      NULLIFY (sab_orb, sac_ae, sac_ppl, sap_ppnl)
+      NULLIFY (sab_orb, sac_ae, sac_fc, sac_ppl, sap_ppnl)
       CALL get_qs_env(qs_env=qs_env, &
                       sab_orb=sab_orb, &
                       sac_ae=sac_ae, &
+                      sac_fc=sac_fc, &
                       sac_ppl=sac_ppl, &
                       sap_ppnl=sap_ppnl)
 
@@ -543,7 +545,7 @@ CONTAINS
       CALL get_qs_kind_set(qs_kind_set, frozen_core_present=fc_present)
       IF (fc_present) THEN
          CALL build_core_fcnl(matrix_h, matrix_p, force, virial, calculate_forces, use_virial, nder, &
-                              qs_kind_set, atomic_kind_set, particle_set, sab_orb, sap_ppnl, eps_ppnl, &
+                              qs_kind_set, atomic_kind_set, particle_set, sab_orb, sac_fc, eps_ppnl, &
                               nimages, cell_to_index, "ORB")
       END IF
 

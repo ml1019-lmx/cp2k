@@ -7,15 +7,14 @@
 !> \brief   Frozen Core
 ! **************************************************************************************************
 MODULE qs_fc_methods
-   USE atomic_kind_types,               ONLY: atomic_kind_type,&
-                                              get_atomic_kind,&
-                                              get_atomic_kind_set
    USE atom_kind_orbitals,              ONLY: calculate_atomic_energies
    USE atom_types,                      ONLY: atom_basis_type,&
                                               init_atom_basis_cgto,&
                                               release_atom_basis
    USE atom_utils,                      ONLY: coulomb_potential_numeric,&
                                               integrate_grid
+   USE atomic_kind_types,               ONLY: atomic_kind_type,&
+                                              get_atomic_kind
    USE basis_set_types,                 ONLY: gto_basis_set_type
    USE cp_log_handling,                 ONLY: cp_get_default_logger,&
                                               cp_logger_get_default_io_unit,&
@@ -176,7 +175,8 @@ CONTAINS
 
       CHARACTER(len=*), PARAMETER :: routineN = 'set_fc_rho0', routineP = moduleN//':'//routineN
 
-      INTEGER                                            :: ikind, natom, nkind, nn, ns, iat, nat, iatom
+      INTEGER                                            :: iat, iatom, ikind, nat, natom, nkind, &
+                                                            nn, ns
       INTEGER, DIMENSION(:), POINTER                     :: atom_list
       LOGICAL                                            :: frozen_core
       REAL(KIND=dp)                                      :: zcore
@@ -217,7 +217,7 @@ CONTAINS
             ! reset Qlm_z
             DO iat = 1, nat
                iatom = atom_list(iat)
-               rho0_mpole%mp_rho(iatom)%Qlm_z = rho0_mpole%mp_rho(iatom)%Qlm_z + qs_kind%zcore*SQRT(fourpi)
+               rho0_mpole%mp_rho(iatom)%Qlm_z = rho0_mpole%mp_rho(iatom)%Qlm_z+qs_kind%zcore*SQRT(fourpi)
             END DO
 !deb
             nn = grid_atom%nr

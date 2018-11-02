@@ -338,21 +338,22 @@ CONTAINS
 !> \brief Calculate the frozen core self energy
 !> \param qs_env ...
 !> \param E_self_core ...
+!> \param e_frozen_core ...
 !> \date    27.04.2001
 !> \author  MK
 !> \version 1.0
 ! **************************************************************************************************
    SUBROUTINE calculate_ecore_self(qs_env, E_self_core, e_frozen_core)
       TYPE(qs_environment_type), POINTER                 :: qs_env
-      REAL(KIND=dp), INTENT(OUT), OPTIONAL               :: E_self_core
-      REAL(KIND=dp), INTENT(OUT), OPTIONAL               :: e_frozen_core
+      REAL(KIND=dp), INTENT(OUT), OPTIONAL               :: E_self_core, e_frozen_core
 
       CHARACTER(len=*), PARAMETER :: routineN = 'calculate_ecore_self', &
          routineP = moduleN//':'//routineN
 
       INTEGER                                            :: handle, iatom, ikind, iparticle_local, &
                                                             natom, nparticle_local
-      REAL(KIND=dp)                                      :: alpha_core_charge, ecore_self, es, zeff, efc
+      REAL(KIND=dp)                                      :: alpha_core_charge, ecore_self, efc, es, &
+                                                            zeff
       TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
       TYPE(atprop_type), POINTER                         :: atprop
       TYPE(distribution_1d_type), POINTER                :: local_particles
@@ -375,7 +376,7 @@ CONTAINS
          CALL get_atomic_kind(atomic_kind_set(ikind), natom=natom)
          CALL get_qs_kind(qs_kind_set(ikind), zeff=zeff, alpha_core_charge=alpha_core_charge)
          ecore_self = ecore_self-REAL(natom, dp)*zeff**2*SQRT(alpha_core_charge)
-         efc = efc + REAL(natom, dp)*qs_kind_set(ikind)%efc
+         efc = efc+REAL(natom, dp)*qs_kind_set(ikind)%efc
       END DO
 
       energy%core_self = ecore_self/SQRT(twopi)
@@ -400,7 +401,7 @@ CONTAINS
                nparticle_local = local_particles%n_el(ikind)
                CALL get_qs_kind(qs_kind_set(ikind), zeff=zeff, alpha_core_charge=alpha_core_charge)
                es = zeff**2*SQRT(alpha_core_charge)/SQRT(twopi)
-               es = es - qs_kind_set(ikind)%efc
+               es = es-qs_kind_set(ikind)%efc
                DO iparticle_local = 1, nparticle_local
                   iatom = local_particles%list(ikind)%array(iparticle_local)
                   atprop%ateself(iatom) = atprop%ateself(iatom)-es

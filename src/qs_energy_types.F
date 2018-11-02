@@ -35,7 +35,7 @@ MODULE qs_energy_types
                        hartree_1c, &
                        e_hartree, & ! contains the hartree energy of electrons only
                        ! computed if requested
-                       efc, & ! frozen core 
+                       efc, & ! frozen core
                        image_charge, &
                        qmmm_el, &
                        qmmm_nu, &
