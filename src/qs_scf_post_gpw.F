@@ -210,6 +210,7 @@ MODULE qs_scf_post_gpw
    USE virial_types,                    ONLY: virial_type
    USE wannier_states,                  ONLY: construct_wannier_states
    USE wannier_states_types,            ONLY: wannier_centres_type
+   USE wfx_utils,                       ONLY: write_mos_wfx
    USE xray_diffraction,                ONLY: calculate_rhotot_elec_gspace,&
                                               xray_diffraction_spectrum
 #include "./base/base_uses.f90"
@@ -2096,6 +2097,8 @@ CONTAINS
             CALL write_dm_binary_restart(mos, dft_section, ks_rmpv)
             sprint_section => section_vals_get_subs_vals(dft_section, "SCF%PRINT")
             CALL write_mos_molden(mos, qs_kind_set, particle_set, sprint_section)
+            CALL get_qs_env(qs_env=qs_env, energy=energy)
+            CALL write_mos_wfx(mos, energy, qs_kind_set, particle_set, dft_control, sprint_section)
          ELSE ! *** if we have k points, let's print the eigenvalues at each of them
             CALL get_qs_env(qs_env=qs_env, kpoints=kpoints)
 

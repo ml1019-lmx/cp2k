@@ -999,9 +999,10 @@ CONTAINS
                IF (replace) CALL mp_file_delete(filename)
                CALL mp_file_open(groupid=logger%para_env%group, &
                                  fh=iounit, filepath=filename, amode_status=mpi_amode)
-               IF (PRESENT(fout)) fout = filename
                res = iounit
             END IF
+            IF (PRESENT(fout)) fout = filename
+
             IF (do_log) THEN
                unit_nr = cp_logger_get_unit_nr(logger, local=my_local)
                IF (unit_nr > 0) &

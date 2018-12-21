@@ -24,6 +24,7 @@ MODULE util
              get_limit, &
              locate, &
              find_boundary, &
+             find_boundary_binary, &
              sort_unique
 
    INTERFACE sort
@@ -55,7 +56,7 @@ CONTAINS
 !>      Derived from the locate function described in
 !>      Numerical Recipes in Fortran 90 (09.01.2004,MK)
 ! **************************************************************************************************
-   FUNCTION locate(array, x) RESULT(x_index)
+   PURE FUNCTION locate(array, x) RESULT(x_index)
       INTEGER, DIMENSION(:), INTENT(IN)                  :: array
       INTEGER, INTENT(IN)                                :: x
       INTEGER                                            :: x_index
@@ -309,5 +310,54 @@ CONTAINS
       END DO
 
    END SUBROUTINE find_boundary2
+
+! **************************************************************************************************
+!> \brief Using binary search locate all members of the array that match x. The array is assumed
+!>        to be sorted in ascending order.
+!>
+!>      array:       AABBBxxxxxxxxxYYYYZZZZZ
+!>                        |       |
+!>                     first     last
+!> \param array   integer array
+!> \param x       item to find
+!> \param first   index of the first element with value x (starting from 1; 0 if not found) [out]
+!> \param last    index of the last  element with value x (starting from 1; 0 if not found) [out]
+! **************************************************************************************************
+   SUBROUTINE find_boundary_binary(array, x, first, last)
+      INTEGER, DIMENSION(:), INTENT(in)                  :: array
+      INTEGER, INTENT(in)                                :: x
+      INTEGER, INTENT(out)                               :: first, last
+
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'find_boundary_binary', &
+         routineP = moduleN//':'//routineN
+
+      INTEGER                                            :: n
+
+      first = locate(array, x)
+
+      IF (first > 0) THEN
+         last = first
+
+         DO WHILE (first > 1)
+            IF (array(first-1) == x) THEN
+               first = first-1
+            ELSE
+               EXIT
+            END IF
+         END DO
+
+         n = SIZE(array)
+         DO WHILE (last < n)
+            IF (array(last+1) == x) THEN
+               last = last+1
+            ELSE
+               EXIT
+            END IF
+         END DO
+      ELSE
+         first = 0
+         last = 0
+      END IF
+   END SUBROUTINE find_boundary_binary
 
 END MODULE util

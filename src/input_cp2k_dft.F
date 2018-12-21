@@ -5224,6 +5224,18 @@ CONTAINS
       CALL section_add_subsection(subsection, print_key)
       CALL section_release(print_key)
 
+      CALL cp_print_key_section_create(print_key, "MOS_WFX", &
+                                       description="Write the molecular orbitals in AIM extended wavefunction format.", &
+                                       print_level=debug_print_level+1, add_last=add_last_numeric, filename="MOS")
+      CALL keyword_create(keyword, name="NDIGITS", &
+                          description="Specifies the number of significiant digits retained.", &
+                          usage="NDIGITS {int}", &
+                          default_i_val=12)
+      CALL section_add_keyword(print_key, keyword)
+      CALL keyword_release(keyword)
+      CALL section_add_subsection(subsection, print_key)
+      CALL section_release(print_key)
+
       CALL section_add_subsection(section, subsection)
       CALL section_release(subsection)
 
