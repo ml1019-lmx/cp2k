@@ -1076,6 +1076,10 @@ CONTAINS
                   zeff_correction = 0.0_dp
                END IF
                nelectron = nelectron+qs_kind_set(ikind)%natom*NINT(zeff-zeff_correction)
+               ! correct for frozen core
+               IF(qs_kind%frozen_core) THEN
+                  nelectron = nelectron - NINT(qs_kind%natom*qs_kind%zcore)
+               END IF
             END IF
 
             IF (PRESENT(all_potential_present)) THEN

@@ -325,6 +325,9 @@ CONTAINS
             DO i = 1, maxder
                DO j = 1, nsgfb
                   clist%achint(:, j, i) = clist%acint(:, j, i)*escale(j, kkind)
+!deb
+write(6,*) "OVERLAP A-C  ",j,clist%acint(:, j, i)
+!deb
                END DO
             END DO
             !
