@@ -27,6 +27,8 @@ MODULE xc_xpbe_hole_t_c_lr
    USE xc_rho_cflags_types,             ONLY: xc_rho_cflags_type
    USE xc_rho_set_types,                ONLY: xc_rho_set_get,&
                                               xc_rho_set_type
+   USE xc_pbe,                          ONLY: pbe_lda_calc
+   USE xc_input_constants,              ONLY: xc_pbe_orig
 #include "../base/base_uses.f90"
 
    IMPLICIT NONE
@@ -153,11 +155,12 @@ CONTAINS
       CHARACTER(len=*), PARAMETER :: routineN = 'xpbe_hole_t_c_lr_lda_eval', &
          routineP = moduleN//':'//routineN
 
-      INTEGER                                            :: handle, npoints
+      INTEGER                                            :: handle, myorder, npoints
       INTEGER, DIMENSION(:, :), POINTER                  :: bo
       REAL(kind=dp)                                      :: epsilon_rho, R, sx
       REAL(kind=dp), DIMENSION(:, :, :), POINTER         :: dummy, e_0, e_ndrho, e_rho, norm_drho, &
-                                                            rho
+                                                            rho, e_rho_rho, e_ndrho_rho, e_ndrho_ndrho, &
+                                                            e_rho_rho_rho, e_ndrho_rho_rho, e_ndrho_ndrho_rho, e_ndrho_ndrho_ndrho
       TYPE(xc_derivative_type), POINTER                  :: deriv
 
       CALL timeset(routineN, handle)
@@ -181,6 +184,14 @@ CONTAINS
       e_0 => dummy
       e_rho => dummy
       e_ndrho => dummy
+      ! [SKC] WORKAROUND: XPBE 2nd derivatives
+      e_rho_rho => dummy
+      e_ndrho_rho => dummy
+      e_ndrho_ndrho => dummy
+      e_rho_rho_rho => dummy
+      e_ndrho_rho_rho => dummy
+      e_ndrho_ndrho_rho => dummy
+      e_ndrho_ndrho_ndrho => dummy
 
       IF (order >= 0) THEN
          deriv => xc_dset_get_derivative(deriv_set, "", &
@@ -195,7 +206,18 @@ CONTAINS
                                          allocate_deriv=.TRUE.)
          CALL xc_derivative_get(deriv, deriv_data=e_ndrho)
       END IF
-      IF (order > 1 .OR. order < -1) THEN
+      IF (order >= 2 .OR. order == -2) THEN
+         deriv => xc_dset_get_derivative(deriv_set, "(rho)(rho)", &
+                                         allocate_deriv=.TRUE.)
+         CALL xc_derivative_get(deriv, deriv_data=e_rho_rho)
+         deriv => xc_dset_get_derivative(deriv_set, "(norm_drho)(rho)", &
+                                         allocate_deriv=.TRUE.)
+         CALL xc_derivative_get(deriv, deriv_data=e_ndrho_rho)
+         deriv => xc_dset_get_derivative(deriv_set, &
+                                         "(norm_drho)(norm_drho)", allocate_deriv=.TRUE.)
+         CALL xc_derivative_get(deriv, deriv_data=e_ndrho_ndrho)
+      END IF
+      IF (order > 2 .OR. order < -2) THEN
          CPABORT("derivatives bigger than 2 not implemented")
       END IF
 
@@ -203,12 +225,34 @@ CONTAINS
          CPABORT("Cutoff_Radius 0.0 not implemented")
       END IF
 
+      ! [SKC] WORKAROUND: COMPUTE XPBE 2nd derivatives; remove this before merging with master
+      IF (order >= 2 .OR. order == -2) THEN
+!$OMP PARALLEL DEFAULT(NONE), &
+!$OMP SHARED(rho,norm_drho,e_0,e_rho,e_ndrho,e_rho_rho,e_ndrho_rho),&
+!$OMP SHARED(e_ndrho_ndrho,e_rho_rho_rho,e_ndrho_rho_rho,e_ndrho_ndrho_rho),&
+!$OMP SHARED(e_ndrho_ndrho_ndrho, npoints, epsilon_rho),&
+!$OMP SHARED(sx, r)
+         CALL pbe_lda_calc(rho=rho, norm_drho=norm_drho, &
+                           e_0=e_0, e_rho=e_rho, e_ndrho=e_ndrho, e_rho_rho=e_rho_rho, &
+                           e_ndrho_rho=e_ndrho_rho, e_ndrho_ndrho=e_ndrho_ndrho, &
+                           e_rho_rho_rho=e_rho_rho_rho, e_ndrho_rho_rho=e_ndrho_rho_rho, &
+                           e_ndrho_ndrho_rho=e_ndrho_ndrho_rho, e_ndrho_ndrho_ndrho=e_ndrho_ndrho_ndrho, &
+                           grad_deriv=-2, &
+                           npoints=npoints, epsilon_rho=epsilon_rho, &
+                           param=xc_pbe_orig, scale_ec=0.0_dp, scale_ex=sx)
+!$OMP     END PARALLEL
+      END IF
+
+      myorder = order
+      IF (order > 1) myorder = 1
+      IF (order < 1) myorder = -1
+
 !$OMP     PARALLEL DEFAULT(NONE) &
-!$OMP              SHARED(npoints, order, rho, norm_drho, e_0, e_rho) &
+!$OMP              SHARED(npoints, myorder, rho, norm_drho, e_0, e_rho) &
 !$OMP              SHARED(e_ndrho, epsilon_rho) &
 !$OMP              SHARED(sx, r)
 
-      CALL xpbe_hole_t_c_lr_lda_calc(npoints, order, rho=rho, norm_drho=norm_drho, &
+      CALL xpbe_hole_t_c_lr_lda_calc(npoints, myorder, rho=rho, norm_drho=norm_drho, &
                                      e_0=e_0, e_rho=e_rho, e_ndrho=e_ndrho, &
                                      epsilon_rho=epsilon_rho, &
                                      sx=sx, R=R)
@@ -365,7 +409,7 @@ CONTAINS
          CALL xc_derivative_get(deriv, deriv_data=e_ndrhob)
       END IF
       IF (order > 1 .OR. order < -1) THEN
-         CPABORT("derivatives bigger than 2 not implemented")
+         CPABORT("derivatives bigger than 1 not implemented")
       END IF
 
       IF (R == 0.0_dp) THEN

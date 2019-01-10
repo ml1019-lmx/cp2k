@@ -46,6 +46,8 @@ MODULE xc_pbe
                                         c = 0.2533_dp, d = 0.349_dp
 
    PUBLIC :: pbe_lda_info, pbe_lsd_info, pbe_lda_eval, pbe_lsd_eval
+   ! [SKC] WORKAROUND: remove the next line before merging with master
+   PUBLIC :: pbe_lda_calc
 CONTAINS
 
 ! **************************************************************************************************
