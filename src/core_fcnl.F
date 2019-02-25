@@ -100,26 +100,35 @@ CONTAINS
       CHARACTER(LEN=*), PARAMETER :: routineN = 'build_core_fcnl', &
          routineP = moduleN//':'//routineN
 
-      INTEGER :: atom_a, atom_b, atom_c, first_col, handle, i, iab, iac, iatom, ibc, icol, ikind, &
+!      INTEGER :: atom_a, atom_b, atom_c, first_col, handle, i, iab, iac, iatom, ibc, icol, ikind, &
+!         ilist, img, inode, irow, iset, j, jatom, jkind, jneighbor, jset, kac, katom, kbc, kkind, &
+!         l, lc_max, lc_min, ldai, ldsab, maxcfc, maxco, maxder, maxl, maxlfc, maxlgto, maxsfc, &
+!         maxsgf, mepos, n1, n2, na, natom, nb, nkind, nlist, nneighbor, nnl, nnode, np, nprjc, &
+!         nseta, nsetb, nsgfa, nsgfb, nthread, prjc, sgfa, sgfb
+      INTEGER :: atom_a, atom_b, atom_c, handle, i, iab, iac, iatom, ibc, icol, ikind, &
          ilist, img, inode, irow, iset, j, jatom, jkind, jneighbor, jset, kac, katom, kbc, kkind, &
-         l, lc_max, lc_min, ldai, ldsab, maxcfc, maxco, maxder, maxl, maxlfc, maxlgto, maxsfc, &
-         maxsgf, mepos, n1, n2, na, natom, nb, nkind, nlist, nneighbor, nnl, nnode, np, nprjc, &
-         nseta, nsetb, nsgfa, nsgfb, nthread, prjc, sgfa, sgfb
+         ldai, ldsab, maxcfc, maxco, maxder, maxl, maxlfc, maxlgto, maxsfc, &
+         maxsgf, mepos, n1, n2, na, natom, nb, nkind, nlist, nneighbor, nnode, np, &
+         nseta, nsetb, nsgfa, nsgfb, nthread, sgfa, sgfb
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: atom_of_kind
       INTEGER, DIMENSION(3)                              :: cell_b, cell_c
       INTEGER, DIMENSION(:), POINTER                     :: la_max, la_min, lb_max, lb_min, npgfa, &
                                                             npgfb, nsgf_seta, nsgf_setb
       INTEGER, DIMENSION(:, :), POINTER                  :: first_sgfa, first_sgfb
-      LOGICAL                                            :: dogth, dokp, fc_present, found
-      LOGICAL, DIMENSION(0:9)                            :: is_nonlocal
+!      LOGICAL                                            :: dogth, dokp, fc_present, found
+      LOGICAL                                            :: dokp, fc_present, found
+!      LOGICAL, DIMENSION(0:9)                            :: is_nonlocal
       REAL(KIND=dp)                                      :: dac, f0
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: escale, owork
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: oint
       REAL(KIND=dp), DIMENSION(3)                        :: fa, fb, rab, rac, rbc
-      REAL(KIND=dp), DIMENSION(:), POINTER               :: a_nl, set_radius_a, set_radius_b
-      REAL(KIND=dp), DIMENSION(:, :), POINTER            :: h_block, h_nl, hshift, p_block, rpgfa, &
-                                                            rpgfb, scon_a, scon_b, zeta, zetb
-      REAL(KIND=dp), DIMENSION(:, :, :), POINTER         :: achint, acint, bchint, bcint, c_nl
+!      REAL(KIND=dp), DIMENSION(:), POINTER               :: a_nl, set_radius_a, set_radius_b
+      REAL(KIND=dp), DIMENSION(:), POINTER               :: set_radius_a, set_radius_b
+!      REAL(KIND=dp), DIMENSION(:, :), POINTER            :: h_block, h_nl, hshift, p_block, rpgfa, &
+!                                                            rpgfb, scon_a, scon_b, zeta, zetb
+      REAL(KIND=dp), DIMENSION(:, :), POINTER            :: h_block, hshift, p_block, rpgfa, rpgfb, scon_a, scon_b, zeta, zetb
+!      REAL(KIND=dp), DIMENSION(:, :, :), POINTER         :: achint, acint, bchint, bcint, c_nl
+      REAL(KIND=dp), DIMENSION(:, :, :), POINTER         :: achint, acint, bchint, bcint
       TYPE(alist_type), POINTER                          :: alist_ac, alist_bc
       TYPE(clist_type), POINTER                          :: clist
       TYPE(gto_basis_set_p_type), DIMENSION(:), POINTER  :: basis_set, fc_basis

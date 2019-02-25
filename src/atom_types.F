@@ -939,8 +939,13 @@ CONTAINS
 
       ALLOCATE (atom)
 
-      NULLIFY (atom%zmp_section)
+      NULLIFY (atom%basis)
+      NULLIFY (atom%potential)
+      NULLIFY (atom%state)
+      NULLIFY (atom%integrals)
+      NULLIFY (atom%orbitals)
       NULLIFY (atom%xc_section)
+      NULLIFY (atom%zmp_section)
       NULLIFY (atom%fmat)
       atom%do_zmp = .FALSE.
       atom%doread = .FALSE.

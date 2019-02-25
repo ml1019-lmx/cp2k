@@ -473,7 +473,7 @@ CONTAINS
       INTEGER, DIMENSION(2)                              :: n_mo, nelectron_spin
       LOGICAL                                            :: all_potential_present, be_silent, &
                                                             do_kpoints, e1terms, fc_present, &
-                                                            has_unit_metric, lribas, was_present
+                                                            has_unit_metric, lribas, was_present, orb_gradient
       REAL(dp)                                           :: ewald_rcut, maxocc, verlet_skin
       TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
       TYPE(cp_logger_type), POINTER                      :: logger
