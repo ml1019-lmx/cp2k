@@ -399,6 +399,8 @@ MODULE cp_control_types
       INTEGER                              :: nlumo
       !> minimal number of MPI processes to be used per excited state
       INTEGER                              :: nprocs
+      !> algorithm to correct orbital energies
+      INTEGER                              :: oe_corr
       !> target accuracy
       REAL(kind=dp)                        :: conv
       !> the smallest excitation amplitude to print

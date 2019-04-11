@@ -1183,6 +1183,7 @@ CONTAINS
       CALL section_vals_val_get(t_section, "MAX_KV", i_val=t_control%nkvs)
       CALL section_vals_val_get(t_section, "NLUMO", i_val=t_control%nlumo)
       CALL section_vals_val_get(t_section, "NPROC_STATE", i_val=t_control%nprocs)
+      CALL section_vals_val_get(t_section, "OE_CORR", i_val=t_control%oe_corr)
 
       CALL section_vals_val_get(t_section, "CONVERGENCE", r_val=t_control%conv)
       CALL section_vals_val_get(t_section, "MIN_AMPLITUDE", r_val=t_control%min_excitation_amplitude)

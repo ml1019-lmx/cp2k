@@ -27,10 +27,10 @@ MODULE input_cp2k_properties_dft
         current_gauge_atom, current_gauge_r, current_gauge_r_and_step_func, &
         current_orb_center_atom, current_orb_center_box, current_orb_center_common, &
         current_orb_center_wannier, do_et_ddapc, do_full_density, do_no_et, do_spin_density, &
-        ot_precond_full_all, ot_precond_full_kinetic, ot_precond_full_single, &
-        ot_precond_full_single_inverse, ot_precond_none, ot_precond_s_inverse, &
-        tddfpt_dipole_berry, tddfpt_dipole_length, tddfpt_dipole_velocity, use_mom_ref_coac, &
-        use_mom_ref_com, use_mom_ref_user, use_mom_ref_zero
+        oe_gllb, oe_lb, oe_none, oe_saop, ot_precond_full_all, ot_precond_full_kinetic, &
+        ot_precond_full_single, ot_precond_full_single_inverse, ot_precond_none, &
+        ot_precond_s_inverse, tddfpt_dipole_berry, tddfpt_dipole_length, tddfpt_dipole_velocity, &
+        use_mom_ref_coac, use_mom_ref_com, use_mom_ref_user, use_mom_ref_zero
    USE input_cp2k_atprop,               ONLY: create_atprop_section
    USE input_cp2k_dft,                  ONLY: create_ddapc_restraint_section,&
                                               create_interp_section,&
@@ -1165,6 +1165,14 @@ CONTAINS
                           " Default is to use all processors (0).", &
                           n_var=1, type_of_var=integer_t, &
                           default_i_val=0)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, name="OE_CORR", &
+                          description="Orbital energy correction potential.", &
+                          enum_c_vals=s2a("NONE", "LB94", "GLLB", "SAOP"), &
+                          enum_i_vals=(/oe_none, oe_lb, oe_gllb, oe_saop/), &
+                          default_i_val=oe_none)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 
