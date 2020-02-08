@@ -44,14 +44,9 @@ MODULE qs_initial_guess
    USE external_potential_types,        ONLY: all_potential_type,&
                                               gth_potential_type,&
                                               sgp_potential_type
-   USE input_constants,                 ONLY: atomic_guess,&
-                                              core_guess,&
-                                              history_guess,&
-                                              mopac_guess,&
-                                              no_guess,&
-                                              random_guess,&
-                                              restart_guess,&
-                                              sparse_guess
+   USE input_constants,                 ONLY: &
+        atomic_guess, atomic_restart_guess, core_guess, history_guess, mopac_guess, no_guess, &
+        random_guess, restart_guess, sparse_guess
    USE input_section_types,             ONLY: section_vals_get_subs_vals,&
                                               section_vals_type
    USE kinds,                           ONLY: default_path_length,&
@@ -69,13 +64,16 @@ MODULE qs_initial_guess
                                               get_qs_kind_set,&
                                               qs_kind_type
    USE qs_mo_io,                        ONLY: read_mo_set,&
+                                              read_partial_mo_set_from_restart,&
                                               wfn_restart_file_name
    USE qs_mo_methods,                   ONLY: calculate_density_matrix,&
                                               make_basis_lowdin,&
                                               make_basis_simple,&
                                               make_basis_sm
    USE qs_mo_occupation,                ONLY: set_mo_occupation
-   USE qs_mo_types,                     ONLY: get_mo_set,&
+   USE qs_mo_types,                     ONLY: deallocate_mo_set,&
+                                              duplicate_mo_set,&
+                                              get_mo_set,&
                                               mo_set_p_type,&
                                               mo_set_restrict
    USE qs_mom_methods,                  ONLY: do_mom_guess
@@ -133,9 +131,9 @@ CONTAINS
 
       CHARACTER(LEN=default_path_length)                 :: file_name, filename
       INTEGER :: atom_a, blk, density_guess, group, handle, homo, i, iatom, ic, icol, id_nr, &
-         ikind, irow, iseed(4), ispin, istart_col, istart_row, j, last_read, n, n_cols, n_rows, &
-         nao, natom, natoms, natoms_tmp, nblocks, nelectron, nmo, nmo_tmp, not_read, nsgf, nspin, &
-         nvec, ounit, qs_env_id, safe_density_guess, size_atomic_kind_set, z
+         ignore_natoms, ikind, irow, iseed(4), ispin, istart_col, istart_row, j, last_read, n, &
+         n_cols, n_rows, nao, natom, natoms, natoms_tmp, nblocks, nelectron, nmo, nmo_tmp, &
+         not_read, nsgf, nspin, nvec, ounit, qs_env_id, safe_density_guess, size_atomic_kind_set, z
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: first_sgf, kind_of, last_sgf
       INTEGER, DIMENSION(2)                              :: nelectron_spin
       INTEGER, DIMENSION(:), POINTER                     :: atom_list, elec_conf, nelec_kind, &
@@ -165,7 +163,7 @@ CONTAINS
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(gto_basis_set_type), POINTER                  :: orb_basis_set
       TYPE(kpoint_type), POINTER                         :: kpoints
-      TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mo_array
+      TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mo_array, mo_array_new
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       TYPE(qs_kind_type), POINTER                        :: qs_kind
@@ -247,6 +245,7 @@ CONTAINS
       IF (scf_control%use_ot .AND. &
           (.NOT. ((density_guess == random_guess) .OR. &
                   (density_guess == atomic_guess) .OR. &
+                  (density_guess == atomic_restart_guess) .OR. &
                   (density_guess == core_guess) .OR. &
                   (density_guess == mopac_guess) .OR. &
                   (density_guess == sparse_guess) .OR. &
@@ -261,11 +260,16 @@ CONTAINS
       ! if not we fall back to an atomic guess. No kidding, the file name should remain
       ! in sync with read_mo_set
       id_nr = 0
-      IF (density_guess == restart_guess) THEN
+      IF (density_guess == restart_guess .OR. density_guess == atomic_restart_guess) THEN
          ! only check existence on I/O node, otherwise if file exists there but
          ! not on compute nodes, everything goes crazy even though only I/O
          ! node actually reads the file
          IF (do_kpoints) THEN
+            IF (density_guess == atomic_restart_guess) THEN
+               CALL cp_abort(__LOCATION__, &
+                             "atomic_restart_guess is not implemented for k-points")
+            END IF
+
             IF (para_env%ionode) THEN
                CALL wfn_restart_file_name(file_name, exist, dft_section, logger, kp=.TRUE.)
             END IF
@@ -561,7 +565,37 @@ CONTAINS
          did_guess = .TRUE.
       END IF
 
-      IF (density_guess == atomic_guess) THEN
+      ignore_natoms = 0
+      IF (density_guess == atomic_restart_guess) THEN
+         IF (do_kpoints) THEN
+            CALL cp_abort(__LOCATION__, &
+                          "atomic_restart_guess is not implemented for k-points")
+         ELSE
+            ALLOCATE (mo_array_new(nspin))
+            DO ispin = 1, nspin
+               NULLIFY (mo_array_new(ispin)%mo_set)
+               CALL duplicate_mo_set(mo_array_new(ispin)%mo_set, mo_array(ispin)%mo_set)
+            END DO
+
+            CALL read_partial_mo_set_from_restart(mo_array_new, particle_set, para_env, id_nr, dft_section, ignore_natoms)
+
+            ! recompute density matrix
+            DO ispin = 1, nspin
+               IF (scf_control%use_ot .OR. scf_env%method == ot_diag_method_nr) THEN !fm->dbcsr
+                  CALL copy_fm_to_dbcsr(mo_array_new(ispin)%mo_set%mo_coeff, mo_array_new(ispin)%mo_set%mo_coeff_b)
+               ENDIF
+
+               CALL calculate_density_matrix(mo_array_new(ispin)%mo_set, p_rmpv(ispin)%matrix)
+            ENDDO
+
+            DO ispin = 1, nspin
+               CALL deallocate_mo_set(mo_array_new(ispin)%mo_set)
+            END DO
+            DEALLOCATE (mo_array_new)
+         END IF
+      END IF
+
+      IF (density_guess == atomic_guess .OR. density_guess == atomic_restart_guess) THEN
 
          subsys_section => section_vals_get_subs_vals(input, "SUBSYS")
          ounit = cp_print_key_unit_nr(logger, subsys_section, "PRINT%KINDS", extension=".Log")
@@ -571,9 +605,14 @@ CONTAINS
                "              and electronic configurations assigned to each atomic kind"
          END IF
 
+         IF (density_guess /= atomic_restart_guess) THEN
+            DO ispin = 1, nspin
+               CALL dbcsr_set(p_rmpv(ispin)%matrix, 0.0_dp)
+            END DO
+         END IF
          CALL calculate_atomic_block_dm(p_rmpv, s_sparse(1)%matrix, &
                                         particle_set, atomic_kind_set, qs_kind_set, &
-                                        nspin, nelectron_spin, ounit, para_env)
+                                        nspin, nelectron_spin, ounit, para_env, ignore_natoms)
 
          DO ispin = 1, nspin
 
@@ -585,7 +624,8 @@ CONTAINS
                IF (ASSOCIATED(scf_env%krylov_space)) do_std_diag = (scf_env%krylov_space%eps_std_diag > 0.0_dp)
                IF (scf_control%use_ot .OR. scf_env%method == ot_diag_method_nr .OR. &
                    (scf_env%method == block_krylov_diag_method_nr .AND. .NOT. do_std_diag) &
-                   .OR. dft_control%do_admm .OR. scf_env%method == block_davidson_diag_method_nr) THEN
+                   .OR. dft_control%do_admm .OR. scf_env%method == block_davidson_diag_method_nr &
+                   .OR. density_guess == atomic_restart_guess) THEN
                   IF (dft_control%restricted .AND. (ispin == 2)) THEN
                      CALL mo_set_restrict(mo_array)
                   ELSE
@@ -986,9 +1026,12 @@ CONTAINS
 !> \param nelectron_spin ...
 !> \param ounit ...
 !> \param para_env ...
+!> \param ignore_natoms  skip this number of atoms from the beginning of particle_set.
+!>                       Density matrix for the skipped atoms should already be constructed,
+!>                       for example by using MOs from a restart file.
 ! **************************************************************************************************
    SUBROUTINE calculate_atomic_block_dm(pmatrix, matrix_s, particle_set, atomic_kind_set, &
-                                        qs_kind_set, nspin, nelectron_spin, ounit, para_env)
+                                        qs_kind_set, nspin, nelectron_spin, ounit, para_env, ignore_natoms)
       TYPE(dbcsr_p_type), DIMENSION(:), INTENT(INOUT)    :: pmatrix
       TYPE(dbcsr_type), INTENT(INOUT)                    :: matrix_s
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
@@ -998,12 +1041,14 @@ CONTAINS
       INTEGER, DIMENSION(:), INTENT(IN)                  :: nelectron_spin
       INTEGER, INTENT(IN)                                :: ounit
       TYPE(cp_para_env_type)                             :: para_env
+      INTEGER, INTENT(IN), OPTIONAL                      :: ignore_natoms
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'calculate_atomic_block_dm', &
          routineP = moduleN//':'//routineN
 
-      INTEGER                                            :: blk, group, handle, icol, ikind, irow, &
-                                                            ispin, natom, nc, nkind, nocc(2)
+      INTEGER                                            :: blk, first_atom, group, handle, icol, &
+                                                            ikind, irow, ispin, natom, nc, nkind, &
+                                                            nocc(2)
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: kind_of
       INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: nok
       REAL(dp), DIMENSION(:, :), POINTER                 :: pdata
@@ -1018,6 +1063,8 @@ CONTAINS
 
       natom = SIZE(particle_set)
       nkind = SIZE(atomic_kind_set)
+      first_atom = 1
+      IF (PRESENT(ignore_natoms)) first_atom = ignore_natoms + 1
       ALLOCATE (kind_of(natom))
       CALL get_atomic_kind_set(atomic_kind_set=atomic_kind_set, kind_of=kind_of)
       ALLOCATE (pmat(nkind))
@@ -1046,22 +1093,26 @@ CONTAINS
          END IF
 
          matrix_p => pmatrix(ispin)%matrix
-         CALL dbcsr_set(matrix_p, 0.0_dp)
+         IF (.NOT. PRESENT(ignore_natoms)) THEN
+            CALL dbcsr_set(matrix_p, 0.0_dp)
+         END IF
 
          nocc(ispin) = 0
          CALL dbcsr_iterator_start(iter, matrix_p)
          DO WHILE (dbcsr_iterator_blocks_left(iter))
             CALL dbcsr_iterator_next_block(iter, irow, icol, pdata, blk)
-            ikind = kind_of(irow)
-            IF (icol .EQ. irow) THEN
-               IF (ispin == 1) THEN
-                  pdata(:, :) = pmat(ikind)%mat(:, :, 1)*rscale + &
-                                pmat(ikind)%mat(:, :, 2)*rscale
-               ELSE
-                  pdata(:, :) = pmat(ikind)%mat(:, :, 1)*rscale - &
-                                pmat(ikind)%mat(:, :, 2)*rscale
+            IF (irow >= first_atom) THEN
+               ikind = kind_of(irow)
+               IF (icol .EQ. irow) THEN
+                  IF (ispin == 1) THEN
+                     pdata(:, :) = pmat(ikind)%mat(:, :, 1)*rscale + &
+                                   pmat(ikind)%mat(:, :, 2)*rscale
+                  ELSE
+                     pdata(:, :) = pmat(ikind)%mat(:, :, 1)*rscale - &
+                                   pmat(ikind)%mat(:, :, 2)*rscale
+                  END IF
+                  nocc(ispin) = nocc(ispin) + nok(ispin, ikind)
                END IF
-               nocc(ispin) = nocc(ispin) + nok(ispin, ikind)
             END IF
          ENDDO
          CALL dbcsr_iterator_stop(iter)

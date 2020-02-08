@@ -91,6 +91,8 @@ MODULE qs_mo_io
              read_rt_mos_from_restart, &
              write_dm_binary_restart
 
+   PUBLIC :: read_partial_mo_set_from_restart
+
    INTERFACE read_mo_set
       MODULE PROCEDURE read_mo_set_from_restart
    END INTERFACE
@@ -964,6 +966,158 @@ CONTAINS
       END IF
 
    END SUBROUTINE read_mos_restart_low
+
+! **************************************************************************************************
+!> \brief Partially read MO coefficients from a previously written restart file.
+!>        mos(1)%mo_set%nao should not be smaller than the actual number of atomic orbitals saved in
+!>        the restart file. Used by SCF_GUESS ATOMIC_RESTART. It needs to be replaced by
+!>        a better approach.
+!> \param mos ...
+!> \param particle_set ...
+!> \param para_env ...
+!> \param id_nr ...
+!> \param dft_section ...
+!> \param natom_read   number of atoms read from the restart file
+! **************************************************************************************************
+   SUBROUTINE read_partial_mo_set_from_restart(mos, particle_set, para_env, id_nr, dft_section, natom_read)
+      TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mos
+      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
+      TYPE(cp_para_env_type), POINTER                    :: para_env
+      INTEGER, INTENT(in)                                :: id_nr
+      TYPE(section_vals_type), POINTER                   :: dft_section
+      INTEGER, INTENT(out)                               :: natom_read
+
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'read_partial_mo_set_from_restart', &
+         routineP = moduleN//':'//routineN
+
+      CHARACTER(LEN=default_path_length)                 :: file_name
+      INTEGER :: group, handle, homo_read, imo, ispin, lfomo_read, nao, nao_read, natom, &
+         nelectron_read, nmo, nmo_read, nset_max, nshell_max, nspin, nspin_read, restart_unit, &
+         source
+      LOGICAL                                            :: is_exist
+      REAL(kind=dp), ALLOCATABLE, DIMENSION(:)           :: eig_read, occ_read
+      REAL(kind=dp), ALLOCATABLE, DIMENSION(:, :)        :: vecbuffer_read
+      TYPE(cp_logger_type), POINTER                      :: logger
+
+      CALL timeset(routineN, handle)
+      logger => cp_get_default_logger()
+
+      nspin = SIZE(mos)
+      nao = mos(1)%mo_set%nao
+      natom = SIZE(particle_set, 1)
+      restart_unit = -1
+
+      group = para_env%group
+      source = para_env%source
+
+      IF (para_env%ionode) THEN
+         CALL wfn_restart_file_name(file_name, is_exist, dft_section, logger)
+         IF (id_nr /= 0) THEN
+            ! Is it one of the backup files?
+            file_name = TRIM(file_name)//".bak-"//ADJUSTL(cp_to_string(id_nr))
+         END IF
+
+         CALL open_file(file_name=file_name, &
+                        file_action="READ", &
+                        file_form="UNFORMATTED", &
+                        file_status="OLD", &
+                        unit_number=restart_unit)
+
+         READ (restart_unit) natom_read, nspin_read, nao_read, nset_max, nshell_max
+      END IF
+
+      CALL mp_bcast(nspin_read, source, group)
+      CALL mp_bcast(natom_read, source, group)
+      CALL mp_bcast(nao_read, source, group)
+
+      IF (nspin_read /= nspin) THEN
+         CALL cp_abort(__LOCATION__, &
+                       "Restarting with different number of spin-components is not yet implemented.")
+      END IF
+
+      IF (natom_read > natom) THEN
+         CALL cp_abort(__LOCATION__, &
+                       "Decreasing the number of atoms is not yet implemented.")
+      END IF
+
+      IF (nao_read > nao) THEN
+         CALL cp_abort(__LOCATION__, &
+                       "Decreasing the number of atomic orbitals is not yet implemented.")
+      END IF
+
+      IF (para_env%ionode) THEN
+         ! Skip information related to the basis set
+         ! nset_info(1:natom_read)
+         READ (restart_unit)
+         ! nshell_info(1:nset_max, 1:natom_read)
+         READ (restart_unit)
+         ! nso_info(1:nshell_max, 1:nset_max, 1:natom_read)
+         READ (restart_unit)
+      END IF
+
+      nao_read = MIN(nao_read, nao)
+      nspin_read = MIN(nspin_read, nspin)
+
+      ALLOCATE (vecbuffer_read(nao_read, 1))
+
+      DO ispin = 1, nspin_read
+         nmo = mos(ispin)%mo_set%nmo
+         mos(ispin)%mo_set%eigenvalues(:) = 0.0_dp
+         mos(ispin)%mo_set%occupation_numbers(:) = 0.0_dp
+
+         IF (para_env%ionode) THEN
+            READ (restart_unit) nmo_read, homo_read, lfomo_read, nelectron_read
+            nmo = MIN(nmo, nmo_read)
+
+            ALLOCATE (eig_read(nmo_read), occ_read(nmo_read))
+            READ (restart_unit) eig_read, occ_read
+
+            mos(ispin)%mo_set%homo = homo_read
+            mos(ispin)%mo_set%lfomo = lfomo_read
+            mos(ispin)%mo_set%nelectron = nelectron_read
+            mos(ispin)%mo_set%eigenvalues(1:nmo) = eig_read(1:nmo)
+            mos(ispin)%mo_set%occupation_numbers(1:nmo) = occ_read(1:nmo)
+
+            homo_read = MIN(homo_read, nmo)
+            mos(ispin)%mo_set%uniform_occupation = COUNT(occ_read(1:nmo) /= mos(ispin)%mo_set%maxocc) == 0
+
+            DEALLOCATE (eig_read, occ_read)
+         END IF
+
+         CALL mp_bcast(nmo_read, source, group)
+         nmo = MIN(nmo, nmo_read)
+
+         CALL mp_bcast(mos(ispin)%mo_set%homo, source, group)
+         CALL mp_bcast(mos(ispin)%mo_set%lfomo, source, group)
+         CALL mp_bcast(mos(ispin)%mo_set%nelectron, source, group)
+         CALL mp_bcast(mos(ispin)%mo_set%eigenvalues(1:nmo), source, group)
+         CALL mp_bcast(mos(ispin)%mo_set%occupation_numbers(1:nmo), source, group)
+         CALL mp_bcast(mos(ispin)%mo_set%uniform_occupation, source, group)
+         CALL cp_fm_set_all(mos(ispin)%mo_set%mo_coeff, 0.0_dp)
+
+         DO imo = 1, nmo
+            ! unefficient version of cp_fm_read_unformatted()
+            IF (para_env%ionode) THEN
+               READ (restart_unit) vecbuffer_read(1:nao_read, 1:1)
+            END IF
+
+            CALL mp_bcast(vecbuffer_read, source, group)
+            CALL cp_fm_set_submatrix(mos(ispin)%mo_set%mo_coeff, vecbuffer_read, 1, imo, nao_read, 1)
+         END DO
+
+         ! skip excessive virtual MOs if there are any
+         IF (para_env%ionode) THEN
+            DO imo = nmo + 1, nmo_read
+               READ (restart_unit)
+            END DO
+         END IF
+      END DO ! spin
+
+      ! Close restart file
+      IF (para_env%ionode) CALL close_file(unit_number=restart_unit)
+
+      CALL timestop(handle)
+   END SUBROUTINE read_partial_mo_set_from_restart
 
 ! **************************************************************************************************
 !> \brief   Write the MO eigenvalues, MO occupation numbers and

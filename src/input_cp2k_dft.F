@@ -31,10 +31,10 @@ MODULE input_cp2k_dft
                                               spline3_pbc_interp
    USE cp_units,                        ONLY: cp_unit_to_cp2k
    USE input_constants,                 ONLY: &
-        atomic_guess, becke_cutoff_element, becke_cutoff_global, broyden_type_1, &
-        broyden_type_1_explicit, broyden_type_1_explicit_ls, broyden_type_1_ls, broyden_type_2, &
-        broyden_type_2_explicit, broyden_type_2_explicit_ls, broyden_type_2_ls, casci_canonical, &
-        cdft_alpha_constraint, cdft_beta_constraint, cdft_charge_constraint, &
+        atomic_guess, atomic_restart_guess, becke_cutoff_element, becke_cutoff_global, &
+        broyden_type_1, broyden_type_1_explicit, broyden_type_1_explicit_ls, broyden_type_1_ls, &
+        broyden_type_2, broyden_type_2_explicit, broyden_type_2_explicit_ls, broyden_type_2_ls, &
+        casci_canonical, cdft_alpha_constraint, cdft_beta_constraint, cdft_charge_constraint, &
         cdft_magnetization_constraint, cholesky_dbcsr, cholesky_inverse, cholesky_off, &
         cholesky_reduce, cholesky_restore, core_guess, diag_block_davidson, diag_block_krylov, &
         diag_filter_matrix, diag_ot, diag_standard, dmft_model, do_admm_aux_exch_func_bee, &
@@ -4954,7 +4954,7 @@ CONTAINS
          description="Change the initial guess for the wavefunction.", &
          usage="SCF_GUESS RESTART", default_i_val=atomic_guess, &
          enum_c_vals=s2a("ATOMIC", "RESTART", "RANDOM", "CORE", &
-                         "HISTORY_RESTART", "MOPAC", "SPARSE", "NONE"), &
+                         "HISTORY_RESTART", "MOPAC", "SPARSE", "ATOMIC_RESTART", "NONE"), &
          enum_desc=s2a("Generate an atomic density using the atomic code", &
                        "Use the RESTART file as an initial guess (and ATOMIC if not present).", &
                        "Use random wavefunction coefficients.", &
@@ -4962,9 +4962,10 @@ CONTAINS
                        "Extrapolated from previous RESTART files.", &
                        "Use same guess as MOPAC for semi-empirical methods or a simple diagonal density matrix for other methods", &
                        "Generate a sparse wavefunction using the atomic code (for OT based methods)", &
+                       "Use the RESTART file as an initial guess. Use ATOMIC guess for new atoms appended to the coordinate list", &
                        "Skip initial guess (only for NON-SCC DFTB)."), &
          enum_i_vals=(/atomic_guess, restart_guess, random_guess, core_guess, &
-                       history_guess, mopac_guess, sparse_guess, no_guess/))
+                       history_guess, mopac_guess, sparse_guess, atomic_restart_guess, no_guess/))
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 
