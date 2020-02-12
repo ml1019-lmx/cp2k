@@ -94,6 +94,8 @@ MODULE negf_methods
                                               simpsonrule_type,&
                                               sr_shape_arc,&
                                               sr_shape_linear
+   USE negf_io,                         ONLY: negf_print_density_cube,&
+                                              negf_print_vhartree_cube
    USE negf_matrix_utils,               ONLY: invert_cell_to_index,&
                                               negf_copy_fm_submat_to_dbcsr,&
                                               negf_copy_sym_dbcsr_to_fm_submat
@@ -104,6 +106,7 @@ MODULE negf_methods
                                               evolt,&
                                               kelvin,&
                                               seconds
+   USE population_analyses,             ONLY: lowdin_population_analysis
    USE qs_density_mixing_types,         ONLY: direct_mixing_nr,&
                                               gspace_mixing_nr
    USE qs_environment_types,            ONLY: get_qs_env,&
@@ -153,8 +156,9 @@ CONTAINS
 
       CHARACTER(len=default_string_length)               :: contact_id_str
       INTEGER                                            :: handle, icontact, ispin, log_unit, &
-                                                            ncontacts, npoints, nspins, print_unit
-      LOGICAL                                            :: should_output
+                                                            ncontacts, npoints, nspins, &
+                                                            print_level, print_unit
+      LOGICAL                                            :: lval, should_output
       REAL(kind=dp)                                      :: energy_max, energy_min
       REAL(kind=dp), DIMENSION(2)                        :: current
       TYPE(cp_blacs_env_type), POINTER                   :: blacs_env
@@ -169,7 +173,7 @@ CONTAINS
       TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(section_vals_type), POINTER                   :: negf_contact_section, &
                                                             negf_mixing_section, negf_section, &
-                                                            print_section, root_section
+                                                            print_key, print_section, root_section
 
       CALL timeset(routineN, handle)
       logger => cp_get_default_logger()
@@ -229,18 +233,44 @@ CONTAINS
       END DO
 
       IF (ncontacts > 1) THEN
+         print_section => section_vals_get_subs_vals(negf_section, "PRINT")
+
          NULLIFY (qs_env)
          CALL force_env_get(force_env, qs_env=qs_env)
          CALL shift_potential(negf_env, negf_control, sub_env, qs_env, base_contact=1, log_unit=log_unit)
 
-         CALL converge_density(negf_env, negf_control, sub_env, qs_env, negf_control%v_shift, base_contact=1, log_unit=log_unit)
+         CALL converge_density(negf_env, negf_control, sub_env, qs_env, negf_control%v_shift, &
+                               base_contact=1, log_unit=log_unit)
+
+         ! optimized NEGF electron density
+         print_key => section_vals_get_subs_vals(print_section, "E_DENSITY_CUBE")
+         CALL negf_print_density_cube(print_key, qs_env, log_unit)
+
+         print_key => section_vals_get_subs_vals(print_section, "V_HARTREE_CUBE")
+         CALL negf_print_vhartree_cube(print_key, qs_env, log_unit)
+
+         ! Compute the Lowdin charges
+         print_key => section_vals_get_subs_vals(print_section, "LOWDIN")
+         should_output = BTEST(cp_print_key_should_output(logger%iter_info, print_key), cp_p_file)
+
+         IF (should_output) THEN
+            print_unit = cp_print_key_unit_nr(logger, print_key, extension=".lowdin", log_filename=.FALSE.)
+
+            print_level = 1
+            CALL section_vals_val_get(print_key, "PRINT_GOP", l_val=lval)
+            IF (lval) print_level = 2
+            CALL section_vals_val_get(print_key, "PRINT_ALL", l_val=lval)
+            IF (lval) print_level = 3
+            CALL lowdin_population_analysis(qs_env, print_unit, print_level)
+            CALL cp_print_key_finished_output(print_unit, logger, print_key)
+         END IF
 
          ! current
          CALL get_qs_env(qs_env, dft_control=dft_control)
 
          nspins = dft_control%nspins
-
          CPASSERT(nspins <= 2)
+
          DO ispin = 1, nspins
             ! compute the electric current flown through a pair of electrodes
             ! contact_id1 -> extended molecule -> contact_id2.
@@ -265,7 +295,6 @@ CONTAINS
          END IF
 
          ! density of states
-         print_section => section_vals_get_subs_vals(negf_section, "PRINT")
          should_output = BTEST(cp_print_key_should_output(logger%iter_info, print_section, "DOS"), cp_p_file)
 
          IF (should_output) THEN
@@ -654,216 +683,218 @@ CONTAINS
 
       CALL timeset(routineN, handle)
 
-      CALL get_qs_env(qs_env, blacs_env=blacs_env, do_kpoints=do_kpoints, dft_control=dft_control, &
-                      para_env=para_env, rho=rho_struct, subsys=subsys)
-      CPASSERT(.NOT. do_kpoints)
+      IF (negf_control%v_shift_maxiters > 1) THEN
+         CALL get_qs_env(qs_env, blacs_env=blacs_env, do_kpoints=do_kpoints, dft_control=dft_control, &
+                         para_env=para_env, rho=rho_struct, subsys=subsys)
+         CPASSERT(.NOT. do_kpoints)
 
-      ! apply external NEGF potential
-      t1 = m_walltime()
+         ! apply external NEGF potential
+         t1 = m_walltime()
 
-      ! need a globally distributed overlap matrix in order to compute integration errors
-      IF (sub_env%ngroups > 1) THEN
-         NULLIFY (matrix_s_fm, fm_struct)
+         ! need a globally distributed overlap matrix in order to compute integration errors
+         IF (sub_env%ngroups > 1) THEN
+            NULLIFY (matrix_s_fm, fm_struct)
 
-         CALL cp_fm_get_info(negf_env%s_s, nrow_global=nao)
-         CALL cp_fm_struct_create(fm_struct, nrow_global=nao, ncol_global=nao, context=blacs_env)
+            CALL cp_fm_get_info(negf_env%s_s, nrow_global=nao)
+            CALL cp_fm_struct_create(fm_struct, nrow_global=nao, ncol_global=nao, context=blacs_env)
 
-         CALL cp_fm_create(matrix_s_fm, fm_struct)
-         CALL cp_fm_struct_release(fm_struct)
+            CALL cp_fm_create(matrix_s_fm, fm_struct)
+            CALL cp_fm_struct_release(fm_struct)
 
-         IF (sub_env%group_distribution(sub_env%mepos_global) == 0) THEN
-            work_fm => negf_env%s_s
+            IF (sub_env%group_distribution(sub_env%mepos_global) == 0) THEN
+               work_fm => negf_env%s_s
+            ELSE
+               NULLIFY (work_fm)
+            END IF
+
+            CALL cp_fm_copy_general(work_fm, matrix_s_fm, para_env)
          ELSE
-            NULLIFY (work_fm)
+            matrix_s_fm => negf_env%s_s
+            CALL cp_fm_retain(matrix_s_fm)
+            CALL cp_fm_get_info(matrix_s_fm, matrix_struct=fm_struct)
          END IF
 
-         CALL cp_fm_copy_general(work_fm, matrix_s_fm, para_env)
-      ELSE
-         matrix_s_fm => negf_env%s_s
-         CALL cp_fm_retain(matrix_s_fm)
          CALL cp_fm_get_info(matrix_s_fm, matrix_struct=fm_struct)
-      END IF
 
-      CALL cp_fm_get_info(matrix_s_fm, matrix_struct=fm_struct)
+         nspins = SIZE(negf_env%h_s)
 
-      nspins = SIZE(negf_env%h_s)
+         mu_base = negf_control%contacts(base_contact)%fermi_level
 
-      mu_base = negf_control%contacts(base_contact)%fermi_level
+         ! keep the initial charge density matrix and Kohn-Sham matrix
+         CALL qs_rho_get(rho_struct, rho_ao_kp=rho_ao_qs_kp)
 
-      ! keep the initial charge density matrix and Kohn-Sham matrix
-      CALL qs_rho_get(rho_struct, rho_ao_kp=rho_ao_qs_kp)
-
-      ! extract the reference density matrix blocks
-      nelectrons_ref = 0.0_dp
-      ALLOCATE (rho_ao_fm(nspins))
-      DO ispin = 1, nspins
-         NULLIFY (rho_ao_fm(ispin)%matrix)
-         CALL cp_fm_create(rho_ao_fm(ispin)%matrix, fm_struct)
-
-         CALL negf_copy_sym_dbcsr_to_fm_submat(matrix=rho_ao_qs_kp(ispin, 1)%matrix, &
-                                               fm=rho_ao_fm(ispin)%matrix, &
-                                               atomlist_row=negf_control%atomlist_S_screening, &
-                                               atomlist_col=negf_control%atomlist_S_screening, &
-                                               subsys=subsys, mpi_comm_global=para_env%group, &
-                                               do_upper_diag=.TRUE., do_lower=.TRUE.)
-
-         CALL cp_fm_trace(rho_ao_fm(ispin)%matrix, matrix_s_fm, trace)
-         nelectrons_ref = nelectrons_ref + trace
-      END DO
-
-      IF (log_unit > 0) THEN
-         WRITE (log_unit, '(/,T2,A)') "COMPUTE SHIFT IN HARTREE POTENTIAL"
-         WRITE (log_unit, '(/,T2,A,T55,F25.14,/)') "Initial electronic density of the scattering region:", -1.0_dp*nelectrons_ref
-         WRITE (log_unit, '(T3,A)') "Step     Integration method      Time        V shift     Convergence (density)"
-         WRITE (log_unit, '(T3,78("-"))')
-      END IF
-
-      temperature = negf_control%contacts(base_contact)%temperature
-
-      ! integration limits: C-path (arch)
-      lbound_cpath = CMPLX(negf_control%energy_lbound, negf_control%eta, kind=dp)
-      ubound_cpath = CMPLX(mu_base - REAL(negf_control%gamma_kT, kind=dp)*temperature, &
-                           REAL(negf_control%delta_npoles, kind=dp)*twopi*temperature, kind=dp)
-
-      ! integration limits: L-path (linear)
-      ubound_lpath = CMPLX(mu_base - LOG(negf_control%conv_density)*temperature, &
-                           REAL(negf_control%delta_npoles, kind=dp)*twopi*temperature, kind=dp)
-
-      v_shift_min = negf_control%v_shift
-      v_shift_max = negf_control%v_shift + negf_control%v_shift_offset
-
-      ALLOCATE (g_surf_circular(nspins), g_surf_linear(nspins))
-
-      DO iter_count = 1, negf_control%v_shift_maxiters
-         SELECT CASE (iter_count)
-         CASE (1)
-            v_shift_guess = v_shift_min
-         CASE (2)
-            v_shift_guess = v_shift_max
-         CASE DEFAULT
-            v_shift_guess = v_shift_min - (nelectrons_min - nelectrons_ref)* &
-                            (v_shift_max - v_shift_min)/(nelectrons_max - nelectrons_min)
-         END SELECT
-
-         ! compute an updated density matrix
-         CALL integration_status_reset(stats)
-
+         ! extract the reference density matrix blocks
+         nelectrons_ref = 0.0_dp
+         ALLOCATE (rho_ao_fm(nspins))
          DO ispin = 1, nspins
-            ! closed contour: residuals
-            CALL negf_init_rho_equiv_residuals(rho_ao_fm=rho_ao_fm(ispin)%matrix, &
-                                               v_shift=v_shift_guess, &
-                                               ignore_bias=.TRUE., &
-                                               negf_env=negf_env, &
-                                               negf_control=negf_control, &
-                                               sub_env=sub_env, &
-                                               ispin=ispin, &
-                                               base_contact=base_contact)
+            NULLIFY (rho_ao_fm(ispin)%matrix)
+            CALL cp_fm_create(rho_ao_fm(ispin)%matrix, fm_struct)
 
-            ! closed contour: C-path
-            CALL negf_add_rho_equiv_low(rho_ao_fm=rho_ao_fm(ispin)%matrix, &
-                                        stats=stats, &
-                                        v_shift=v_shift_guess, &
-                                        ignore_bias=.TRUE., &
-                                        negf_env=negf_env, &
-                                        negf_control=negf_control, &
-                                        sub_env=sub_env, &
-                                        ispin=ispin, &
-                                        base_contact=base_contact, &
-                                        integr_lbound=lbound_cpath, &
-                                        integr_ubound=ubound_cpath, &
-                                        matrix_s_global=matrix_s_fm, &
-                                        is_circular=.TRUE., &
-                                        g_surf_cache=g_surf_circular(ispin))
-            IF (negf_control%disable_cache) &
-               CALL green_functions_cache_release(g_surf_circular(ispin))
+            CALL negf_copy_sym_dbcsr_to_fm_submat(matrix=rho_ao_qs_kp(ispin, 1)%matrix, &
+                                                  fm=rho_ao_fm(ispin)%matrix, &
+                                                  atomlist_row=negf_control%atomlist_S_screening, &
+                                                  atomlist_col=negf_control%atomlist_S_screening, &
+                                                  subsys=subsys, mpi_comm_global=para_env%group, &
+                                                  do_upper_diag=.TRUE., do_lower=.TRUE.)
 
-            ! closed contour: L-path
-            CALL negf_add_rho_equiv_low(rho_ao_fm=rho_ao_fm(ispin)%matrix, &
-                                        stats=stats, &
-                                        v_shift=v_shift_guess, &
-                                        ignore_bias=.TRUE., &
-                                        negf_env=negf_env, &
-                                        negf_control=negf_control, &
-                                        sub_env=sub_env, &
-                                        ispin=ispin, &
-                                        base_contact=base_contact, &
-                                        integr_lbound=ubound_cpath, &
-                                        integr_ubound=ubound_lpath, &
-                                        matrix_s_global=matrix_s_fm, &
-                                        is_circular=.FALSE., &
-                                        g_surf_cache=g_surf_linear(ispin))
-            IF (negf_control%disable_cache) &
-               CALL green_functions_cache_release(g_surf_linear(ispin))
+            CALL cp_fm_trace(rho_ao_fm(ispin)%matrix, matrix_s_fm, trace)
+            nelectrons_ref = nelectrons_ref + trace
          END DO
 
-         IF (nspins > 1) THEN
-            DO ispin = 2, nspins
-               CALL cp_fm_scale_and_add(1.0_dp, rho_ao_fm(1)%matrix, 1.0_dp, rho_ao_fm(ispin)%matrix)
-            END DO
-         ELSE
-            CALL cp_fm_scale(2.0_dp, rho_ao_fm(1)%matrix)
-         END IF
-
-         CALL cp_fm_trace(rho_ao_fm(1)%matrix, matrix_s_fm, nelectrons_guess)
-
-         t2 = m_walltime()
-
          IF (log_unit > 0) THEN
-            WRITE (log_unit, '(T2,I5,T12,A,T32,F8.1,T42,F15.8,T60,ES20.5E2)') &
-               iter_count, get_method_description_string(stats, negf_control%integr_method), &
-               t2 - t1, v_shift_guess, nelectrons_guess - nelectrons_ref
+            WRITE (log_unit, '(/,T2,A)') "COMPUTE SHIFT IN HARTREE POTENTIAL"
+            WRITE (log_unit, '(/,T2,A,T55,F25.14,/)') "Initial electronic density of the scattering region:", -1.0_dp*nelectrons_ref
+            WRITE (log_unit, '(T3,A)') "Step     Integration method      Time        V shift     Convergence (density)"
+            WRITE (log_unit, '(T3,78("-"))')
          END IF
 
-         IF (ABS(nelectrons_guess - nelectrons_ref) < negf_control%conv_scf) EXIT
+         temperature = negf_control%contacts(base_contact)%temperature
 
-         ! compute correction
-         SELECT CASE (iter_count)
-         CASE (1)
-            nelectrons_min = nelectrons_guess
-         CASE (2)
-            nelectrons_max = nelectrons_guess
-         CASE DEFAULT
-            IF (v_shift_guess < v_shift_min) THEN
-               v_shift_max = v_shift_min
-               nelectrons_max = nelectrons_min
-               v_shift_min = v_shift_guess
-               nelectrons_min = nelectrons_guess
-            ELSE IF (v_shift_guess > v_shift_max) THEN
-               v_shift_min = v_shift_max
-               nelectrons_min = nelectrons_max
-               v_shift_max = v_shift_guess
-               nelectrons_max = nelectrons_guess
-            ELSE IF (v_shift_max - v_shift_guess < v_shift_guess - v_shift_min) THEN
-               v_shift_max = v_shift_guess
-               nelectrons_max = nelectrons_guess
+         ! integration limits: C-path (arch)
+         lbound_cpath = CMPLX(negf_control%energy_lbound, negf_control%eta, kind=dp)
+         ubound_cpath = CMPLX(mu_base - REAL(negf_control%gamma_kT, kind=dp)*temperature, &
+                              REAL(negf_control%delta_npoles, kind=dp)*twopi*temperature, kind=dp)
+
+         ! integration limits: L-path (linear)
+         ubound_lpath = CMPLX(mu_base - LOG(negf_control%conv_density)*temperature, &
+                              REAL(negf_control%delta_npoles, kind=dp)*twopi*temperature, kind=dp)
+
+         v_shift_min = negf_control%v_shift
+         v_shift_max = negf_control%v_shift + negf_control%v_shift_offset
+
+         ALLOCATE (g_surf_circular(nspins), g_surf_linear(nspins))
+
+         DO iter_count = 1, negf_control%v_shift_maxiters
+            SELECT CASE (iter_count)
+            CASE (1)
+               v_shift_guess = v_shift_min
+            CASE (2)
+               v_shift_guess = v_shift_max
+            CASE DEFAULT
+               v_shift_guess = v_shift_min - (nelectrons_min - nelectrons_ref)* &
+                               (v_shift_max - v_shift_min)/(nelectrons_max - nelectrons_min)
+            END SELECT
+
+            ! compute an updated density matrix
+            CALL integration_status_reset(stats)
+
+            DO ispin = 1, nspins
+               ! closed contour: residuals
+               CALL negf_init_rho_equiv_residuals(rho_ao_fm=rho_ao_fm(ispin)%matrix, &
+                                                  v_shift=v_shift_guess, &
+                                                  ignore_bias=.TRUE., &
+                                                  negf_env=negf_env, &
+                                                  negf_control=negf_control, &
+                                                  sub_env=sub_env, &
+                                                  ispin=ispin, &
+                                                  base_contact=base_contact)
+
+               ! closed contour: C-path
+               CALL negf_add_rho_equiv_low(rho_ao_fm=rho_ao_fm(ispin)%matrix, &
+                                           stats=stats, &
+                                           v_shift=v_shift_guess, &
+                                           ignore_bias=.TRUE., &
+                                           negf_env=negf_env, &
+                                           negf_control=negf_control, &
+                                           sub_env=sub_env, &
+                                           ispin=ispin, &
+                                           base_contact=base_contact, &
+                                           integr_lbound=lbound_cpath, &
+                                           integr_ubound=ubound_cpath, &
+                                           matrix_s_global=matrix_s_fm, &
+                                           is_circular=.TRUE., &
+                                           g_surf_cache=g_surf_circular(ispin))
+               IF (negf_control%disable_cache) &
+                  CALL green_functions_cache_release(g_surf_circular(ispin))
+
+               ! closed contour: L-path
+               CALL negf_add_rho_equiv_low(rho_ao_fm=rho_ao_fm(ispin)%matrix, &
+                                           stats=stats, &
+                                           v_shift=v_shift_guess, &
+                                           ignore_bias=.TRUE., &
+                                           negf_env=negf_env, &
+                                           negf_control=negf_control, &
+                                           sub_env=sub_env, &
+                                           ispin=ispin, &
+                                           base_contact=base_contact, &
+                                           integr_lbound=ubound_cpath, &
+                                           integr_ubound=ubound_lpath, &
+                                           matrix_s_global=matrix_s_fm, &
+                                           is_circular=.FALSE., &
+                                           g_surf_cache=g_surf_linear(ispin))
+               IF (negf_control%disable_cache) &
+                  CALL green_functions_cache_release(g_surf_linear(ispin))
+            END DO
+
+            IF (nspins > 1) THEN
+               DO ispin = 2, nspins
+                  CALL cp_fm_scale_and_add(1.0_dp, rho_ao_fm(1)%matrix, 1.0_dp, rho_ao_fm(ispin)%matrix)
+               END DO
             ELSE
-               v_shift_min = v_shift_guess
-               nelectrons_min = nelectrons_guess
+               CALL cp_fm_scale(2.0_dp, rho_ao_fm(1)%matrix)
             END IF
-         END SELECT
 
-         t1 = t2
-      END DO
+            CALL cp_fm_trace(rho_ao_fm(1)%matrix, matrix_s_fm, nelectrons_guess)
 
-      negf_control%v_shift = v_shift_guess
+            t2 = m_walltime()
+
+            IF (log_unit > 0) THEN
+               WRITE (log_unit, '(T2,I5,T12,A,T32,F8.1,T42,F15.8,T60,ES20.5E2)') &
+                  iter_count, get_method_description_string(stats, negf_control%integr_method), &
+                  t2 - t1, v_shift_guess, nelectrons_guess - nelectrons_ref
+            END IF
+
+            IF (ABS(nelectrons_guess - nelectrons_ref) < negf_control%conv_scf) EXIT
+
+            ! compute correction
+            SELECT CASE (iter_count)
+            CASE (1)
+               nelectrons_min = nelectrons_guess
+            CASE (2)
+               nelectrons_max = nelectrons_guess
+            CASE DEFAULT
+               IF (v_shift_guess < v_shift_min) THEN
+                  v_shift_max = v_shift_min
+                  nelectrons_max = nelectrons_min
+                  v_shift_min = v_shift_guess
+                  nelectrons_min = nelectrons_guess
+               ELSE IF (v_shift_guess > v_shift_max) THEN
+                  v_shift_min = v_shift_max
+                  nelectrons_min = nelectrons_max
+                  v_shift_max = v_shift_guess
+                  nelectrons_max = nelectrons_guess
+               ELSE IF (v_shift_max - v_shift_guess < v_shift_guess - v_shift_min) THEN
+                  v_shift_max = v_shift_guess
+                  nelectrons_max = nelectrons_guess
+               ELSE
+                  v_shift_min = v_shift_guess
+                  nelectrons_min = nelectrons_guess
+               END IF
+            END SELECT
+
+            t1 = t2
+         END DO
+
+         negf_control%v_shift = v_shift_guess
+
+         DO ispin = nspins, 1, -1
+            CALL green_functions_cache_release(g_surf_circular(ispin))
+            CALL green_functions_cache_release(g_surf_linear(ispin))
+         END DO
+         DEALLOCATE (g_surf_circular, g_surf_linear)
+
+         DO ispin = nspins, 1, -1
+            CALL cp_fm_release(rho_ao_fm(ispin)%matrix)
+         END DO
+         DEALLOCATE (rho_ao_fm)
+
+         IF (ASSOCIATED(matrix_s_fm)) &
+            CALL cp_fm_release(matrix_s_fm)
+      END IF
 
       IF (log_unit > 0) THEN
          WRITE (log_unit, '(T2,A,T62,F18.8)') "NEGF|    Shift in Hartree potential", negf_control%v_shift
       END IF
-
-      DO ispin = nspins, 1, -1
-         CALL green_functions_cache_release(g_surf_circular(ispin))
-         CALL green_functions_cache_release(g_surf_linear(ispin))
-      END DO
-      DEALLOCATE (g_surf_circular, g_surf_linear)
-
-      DO ispin = nspins, 1, -1
-         CALL cp_fm_release(rho_ao_fm(ispin)%matrix)
-      END DO
-      DEALLOCATE (rho_ao_fm)
-
-      IF (ASSOCIATED(matrix_s_fm)) &
-         CALL cp_fm_release(matrix_s_fm)
 
       CALL timestop(handle)
    END SUBROUTINE shift_potential
@@ -1238,8 +1269,9 @@ CONTAINS
 
       DO image = 1, nimages
          DO ispin = 1, nspins
-            CALL dbcsr_copy(matrix_b=matrix_ks_qs_kp(ispin, image)%matrix, matrix_a=matrix_ks_initial_kp(ispin, image)%matrix)
-            CALL dbcsr_copy(matrix_b=rho_ao_qs_kp(ispin, image)%matrix, matrix_a=rho_ao_initial_kp(ispin, image)%matrix)
+            ! do not restore DFT electron density and Kohn-Sham matrices. We are going to print the optimised matrices later on.
+            !CALL dbcsr_copy(matrix_b=matrix_ks_qs_kp(ispin, image)%matrix, matrix_a=matrix_ks_initial_kp(ispin, image)%matrix)
+            !CALL dbcsr_copy(matrix_b=rho_ao_qs_kp(ispin, image)%matrix, matrix_a=rho_ao_initial_kp(ispin, image)%matrix)
 
             CALL dbcsr_deallocate_matrix(matrix_ks_initial_kp(ispin, image)%matrix)
             CALL dbcsr_deallocate_matrix(rho_ao_initial_kp(ispin, image)%matrix)
