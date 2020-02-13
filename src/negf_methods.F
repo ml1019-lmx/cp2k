@@ -35,10 +35,13 @@ MODULE negf_methods
    USE cp_log_handling,                 ONLY: cp_get_default_logger,&
                                               cp_logger_get_default_io_unit,&
                                               cp_logger_type
-   USE cp_output_handling,              ONLY: cp_p_file,&
+   USE cp_output_handling,              ONLY: cp_add_iter_level,&
+                                              cp_iterate,&
+                                              cp_p_file,&
                                               cp_print_key_finished_output,&
                                               cp_print_key_should_output,&
-                                              cp_print_key_unit_nr
+                                              cp_print_key_unit_nr,&
+                                              cp_rm_iter_level
    USE cp_para_types,                   ONLY: cp_para_env_type
    USE cp_subsys_types,                 ONLY: cp_subsys_type
    USE dbcsr_api,                       ONLY: dbcsr_copy,&
@@ -95,7 +98,9 @@ MODULE negf_methods
                                               sr_shape_arc,&
                                               sr_shape_linear
    USE negf_io,                         ONLY: negf_print_density_cube,&
-                                              negf_print_vhartree_cube
+                                              negf_print_vhartree_cube,&
+                                              negf_read_restart,&
+                                              negf_write_restart
    USE negf_matrix_utils,               ONLY: invert_cell_to_index,&
                                               negf_copy_fm_submat_to_dbcsr,&
                                               negf_copy_sym_dbcsr_to_fm_submat
@@ -171,9 +176,8 @@ CONTAINS
       TYPE(negf_env_type)                                :: negf_env
       TYPE(negf_subgroup_env_type)                       :: sub_env
       TYPE(qs_environment_type), POINTER                 :: qs_env
-      TYPE(section_vals_type), POINTER                   :: negf_contact_section, &
-                                                            negf_mixing_section, negf_section, &
-                                                            print_key, print_section, root_section
+      TYPE(section_vals_type), POINTER :: negf_contact_section, negf_mixing_section, negf_section, &
+         print_key, print_section, restart_print_key, root_section
 
       CALL timeset(routineN, handle)
       logger => cp_get_default_logger()
@@ -234,13 +238,15 @@ CONTAINS
 
       IF (ncontacts > 1) THEN
          print_section => section_vals_get_subs_vals(negf_section, "PRINT")
+         restart_print_key => section_vals_get_subs_vals(print_section, "RESTART")
 
          NULLIFY (qs_env)
          CALL force_env_get(force_env, qs_env=qs_env)
          CALL shift_potential(negf_env, negf_control, sub_env, qs_env, base_contact=1, log_unit=log_unit)
 
          CALL converge_density(negf_env, negf_control, sub_env, qs_env, negf_control%v_shift, &
-                               base_contact=1, log_unit=log_unit)
+                               base_contact=1, log_unit=log_unit, negf_section=negf_section, &
+                               restart_print_key=restart_print_key)
 
          ! optimized NEGF electron density
          print_key => section_vals_get_subs_vals(print_section, "E_DENSITY_CUBE")
@@ -893,7 +899,7 @@ CONTAINS
       END IF
 
       IF (log_unit > 0) THEN
-         WRITE (log_unit, '(T2,A,T62,F18.8)') "NEGF|    Shift in Hartree potential", negf_control%v_shift
+         WRITE (log_unit, '(/,T2,A,T62,F18.8)') "NEGF|    Shift in Hartree potential", negf_control%v_shift
       END IF
 
       CALL timestop(handle)
@@ -902,22 +908,27 @@ CONTAINS
 ! **************************************************************************************************
 !> \brief Converge electronic density of the scattering region.
 !> \param negf_env      NEGF environment
+!>                      (inout, as h_s can be read from restart file)
 !> \param negf_control  NEGF control
 !> \param sub_env       NEGF parallel (sub)group environment
 !> \param qs_env        QuickStep environment
 !> \param v_shift       shift in Hartree potential
 !> \param base_contact  index of the reference contact
 !> \param log_unit      output unit
+!> \param negf_section ...
+!> \param restart_print_key ...
 !> \par History
 !>    * 06.2017 created [Sergey Chulkov]
 ! **************************************************************************************************
-   SUBROUTINE converge_density(negf_env, negf_control, sub_env, qs_env, v_shift, base_contact, log_unit)
-      TYPE(negf_env_type), INTENT(in)                    :: negf_env
+   SUBROUTINE converge_density(negf_env, negf_control, sub_env, qs_env, v_shift, base_contact, &
+                               log_unit, negf_section, restart_print_key)
+      TYPE(negf_env_type), INTENT(inout)                 :: negf_env
       TYPE(negf_control_type), POINTER                   :: negf_control
       TYPE(negf_subgroup_env_type), INTENT(in)           :: sub_env
       TYPE(qs_environment_type), POINTER                 :: qs_env
       REAL(kind=dp), INTENT(in)                          :: v_shift
       INTEGER, INTENT(in)                                :: base_contact, log_unit
+      TYPE(section_vals_type), POINTER                   :: negf_section, restart_print_key
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'converge_density', &
          routineP = moduleN//':'//routineN
@@ -927,7 +938,7 @@ CONTAINS
       INTEGER                                            :: handle, icontact, image, ispin, &
                                                             iter_count, nao, ncontacts, nimages, &
                                                             nspins
-      LOGICAL                                            :: do_kpoints
+      LOGICAL                                            :: do_kpoints, is_restarted
       REAL(kind=dp)                                      :: iter_delta, mu_base, nelectrons, &
                                                             nelectrons_diff, t1, t2, temperature, &
                                                             trace, v_base, v_contact
@@ -935,6 +946,7 @@ CONTAINS
       TYPE(cp_fm_p_type), ALLOCATABLE, DIMENSION(:)      :: rho_ao_delta_fm, rho_ao_new_fm
       TYPE(cp_fm_struct_type), POINTER                   :: fm_struct
       TYPE(cp_fm_type), POINTER                          :: ao_ao_fm_global, matrix_s_fm, work_fm
+      TYPE(cp_logger_type), POINTER                      :: logger
       TYPE(cp_para_env_type), POINTER                    :: para_env
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: matrix_ks_initial_kp, matrix_ks_qs_kp, &
                                                             rho_ao_initial_kp, rho_ao_new_kp, &
@@ -954,6 +966,7 @@ CONTAINS
       IF (ncontacts < 2) RETURN
 
       CALL timeset(routineN, handle)
+      logger => cp_get_default_logger()
 
       CALL get_qs_env(qs_env, blacs_env=blacs_env, do_kpoints=do_kpoints, dft_control=dft_control, &
                       matrix_ks_kp=matrix_ks_qs_kp, para_env=para_env, rho=rho_struct, subsys=subsys)
@@ -1019,6 +1032,11 @@ CONTAINS
          END DO
       END DO
 
+      ! read Hamiltonian of the scattering region from a restart file.
+      ! In an ideal world the density matrix should be read instead.
+      is_restarted = negf_read_restart(negf_env%h_s, negf_control%atomlist_S_screening, subsys, &
+                                       negf_section, para_env, log_unit)
+
       ! extract the reference density matrix blocks
       nelectrons = 0.0_dp
       ALLOCATE (rho_ao_delta_fm(nspins), rho_ao_new_fm(nspins))
@@ -1076,9 +1094,13 @@ CONTAINS
             ubound_lpath = CMPLX(mu_base - LOG(negf_control%conv_density)*temperature, &
                                  REAL(negf_control%delta_npoles, kind=dp)*twopi*temperature, kind=dp)
 
+            CALL cp_add_iter_level(logger%iter_info, "NEGF_SCF")
             ALLOCATE (g_surf_circular(nspins), g_surf_linear(nspins), g_surf_nonequiv(nspins))
 
-            DO iter_count = 1, negf_control%max_scf
+            DO
+               CALL cp_iterate(logger%iter_info, iter_nr_out=iter_count)
+               IF (iter_count > negf_control%max_scf) EXIT
+
                ! compute an updated density matrix
                CALL integration_status_reset(stats)
 
@@ -1177,7 +1199,7 @@ CONTAINS
                t1 = t2
 
                ! mix density matrices
-               IF (negf_env%mixing_method == direct_mixing_nr) THEN
+               IF (negf_env%mixing_method == direct_mixing_nr .OR. is_restarted) THEN
                   DO image = 1, nimages
                      DO ispin = 1, nspins
                         CALL dbcsr_copy(matrix_b=rho_ao_new_kp(ispin, image)%matrix, &
@@ -1193,8 +1215,12 @@ CONTAINS
                                                        subsys=subsys)
                   END DO
 
-                  CALL scf_env_density_mixing(rho_ao_new_kp, negf_env%mixing_storage, rho_ao_qs_kp, &
-                                              para_env, iter_delta, iter_count)
+                  IF (is_restarted) THEN
+                     is_restarted = .FALSE.
+                  ELSE
+                     CALL scf_env_density_mixing(rho_ao_new_kp, negf_env%mixing_storage, rho_ao_qs_kp, &
+                                                 para_env, iter_delta, iter_count)
+                  END IF
 
                   DO image = 1, nimages
                      DO ispin = 1, nspins
@@ -1240,6 +1266,8 @@ CONTAINS
                                                         do_upper_diag=.TRUE., do_lower=.TRUE.)
 
                END DO
+
+               CALL negf_write_restart(negf_env%h_s, negf_control%atomlist_S_screening, subsys, logger, restart_print_key)
             END DO
 
             IF (log_unit > 0) THEN
@@ -1249,6 +1277,10 @@ CONTAINS
                   WRITE (log_unit, '(/,T11,1X,A,I0,A)') "*** NEGF run did NOT converge after ", iter_count - 1, " iteration(s) ***"
                END IF
             END IF
+
+            CALL cp_iterate(logger%iter_info, increment=0, last=.TRUE.)
+            CALL negf_write_restart(negf_env%h_s, negf_control%atomlist_S_screening, subsys, logger, restart_print_key)
+            CALL cp_rm_iter_level(logger%iter_info, "NEGF_SCF")
 
             DO ispin = nspins, 1, -1
                CALL green_functions_cache_release(g_surf_circular(ispin))

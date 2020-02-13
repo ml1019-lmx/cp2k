@@ -10,8 +10,10 @@
 MODULE input_cp2k_negf
    USE bibliography,                    ONLY: Bailey2006,&
                                               Papior2017
-   USE cp_output_handling,              ONLY: cp_print_key_section_create,&
-                                              high_print_level
+   USE cp_output_handling,              ONLY: add_last_numeric,&
+                                              cp_print_key_section_create,&
+                                              high_print_level,&
+                                              low_print_level
    USE input_constants,                 ONLY: negfint_method_cc,&
                                               negfint_method_simpson
    USE input_keyword_types,             ONLY: keyword_create,&
@@ -24,6 +26,7 @@ MODULE input_cp2k_negf
                                               section_type
    USE input_val_types,                 ONLY: char_t,&
                                               integer_t,&
+                                              lchar_t,&
                                               real_t
    USE kinds,                           ONLY: dp
    USE physcon,                         ONLY: kelvin
@@ -206,9 +209,34 @@ CONTAINS
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 
+      ! Restart
+      CALL keyword_create(keyword, __LOCATION__, name="E_DENSITY_RESTART_FILE_NAME", &
+                          description="A restart file with an initial electron density of the scattering region."// &
+                          " It may include a path. If no file is specified, the DFT electron density will be used"// &
+                          " as an initial guess.", &
+                          usage="E_DENSITY_RESTART_FILE_NAME <FILENAME>", &
+                          type_of_var=lchar_t)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
       ! PRINT subsection
       CALL section_create(subsection, __LOCATION__, "PRINT", "Print properties for the scattering region.", &
                           repeats=.FALSE.)
+
+      CALL cp_print_key_section_create(print_key, __LOCATION__, "RESTART", &
+                                       description="Controls the dumping of the NEGF restart file "// &
+                                       "By default keeps a short history of three restarts.", &
+                                       print_level=low_print_level, common_iter_levels=3, &
+                                       each_iter_names=s2a("NEGF_SCF"), each_iter_values=(/10/), &
+                                       add_last=add_last_numeric, filename="RESTART")
+      CALL keyword_create(keyword, __LOCATION__, name="BACKUP_COPIES", &
+                          description="Specifies the maximum index of backup copies.", &
+                          usage="BACKUP_COPIES {int}", &
+                          default_i_val=3)
+      CALL section_add_keyword(print_key, keyword)
+      CALL keyword_release(keyword)
+      CALL section_add_subsection(subsection, print_key)
+      CALL section_release(print_key)
 
       CALL create_print_dos_section(print_key, "DOS", "the Density of States (DOS)")
       CALL section_add_subsection(subsection, print_key)
