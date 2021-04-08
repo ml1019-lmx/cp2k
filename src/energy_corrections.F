@@ -120,6 +120,7 @@ MODULE energy_corrections
                                               qs_environment_type,&
                                               set_qs_env
    USE qs_force_types,                  ONLY: allocate_qs_force,&
+                                              deallocate_qs_force,&
                                               qs_force_type,&
                                               sum_qs_force,&
                                               total_qs_force,&
@@ -264,6 +265,7 @@ CONTAINS
             END IF
             IF (my_calc_forces) THEN
                CALL get_qs_env(qs_env, force=ec_force)
+               IF (ASSOCIATED(ec_env%force)) CALL deallocate_qs_force(ec_env%force)
                ec_env%force => ec_force
                CALL zero_qs_force(ks_force)
                CALL sum_qs_force(ks_force, ec_force)

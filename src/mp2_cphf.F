@@ -500,7 +500,7 @@ CONTAINS
       ! CPHF solver
       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
       IF (.NOT. alpha_beta) THEN
-         IF(mp2_env%ri_mp2%use_old_grad) THEN
+         IF (mp2_env%ri_mp2%use_old_grad) THEN
             CALL solve_z_vector_eq_low(qs_env, mp2_env, para_env, homo, virtual, dimen, unit_nr, &
                                        mo_coeff, mo_coeff_o, mo_coeff_v, Eigenval, blacs_env, &
                                        hfx_sections, n_rep_hf, &
@@ -510,7 +510,7 @@ CONTAINS
             CALL solve_z_response(qs_env, mp2_env, unit_nr, mo_coeff_o, mo_coeff_v, L_jb, P_ia)
          END IF
       ELSE
-         IF(mp2_env%ri_mp2%use_old_grad) THEN
+         IF (mp2_env%ri_mp2%use_old_grad) THEN
             CALL solve_z_vector_eq_low(qs_env, mp2_env, para_env, homo, virtual, dimen, unit_nr, &
                                        mo_coeff, mo_coeff_o, mo_coeff_v, Eigenval, blacs_env, &
                                        hfx_sections, n_rep_hf, &
