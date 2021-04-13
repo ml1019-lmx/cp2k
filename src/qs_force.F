@@ -209,10 +209,6 @@ CONTAINS
 
       ! recalculate energy with forces
       CALL qs_energies(qs_env, calc_forces=.TRUE.)
-!deb
-      WRITE (6, *) "FORCE TEST 1"
-      CALL write_forces_debug(force)
-!deb
 
       NULLIFY (para_env)
       CALL get_qs_env(qs_env, &
@@ -313,18 +309,10 @@ CONTAINS
             CALL build_ri_matrices(lri_env, qs_env, calculate_forces=.TRUE.)
          ENDIF
       END IF
-!deb
-      WRITE (6, *) "FORCE TEST 2"
-      CALL write_forces_debug(force)
-!deb
 
       ! Compute grid-based forces
       CALL qs_ks_update_qs_env(qs_env, calculate_forces=.TRUE.)
 
-!deb
-      WRITE (6, *) "FORCE TEST 3"
-      CALL write_forces_debug(force)
-!deb
       ! MP2 Code
       IF (ASSOCIATED(qs_env%mp2_env)) THEN
          NULLIFY (matrix_p_mp2, matrix_w_mp2, rho, ks_env, energy)
@@ -353,10 +341,6 @@ CONTAINS
          ! deallocate mp2_W
          CALL dbcsr_deallocate_matrix_set(matrix_w_mp2)
          CALL set_ks_env(ks_env, matrix_w_mp2=Null())
-!deb
-         WRITE (6, *) "FORCE TEST mp2"
-         CALL write_forces_debug(force)
-!deb
 
       END IF
 
@@ -386,10 +370,6 @@ CONTAINS
          END DO
          CALL calc_mixed_overlap_force(qs_env)
       END IF
-!deb
-      WRITE (6, *) "FORCE TEST 4"
-      CALL write_forces_debug(force)
-!deb
 
       ! Energy_correction
       CALL energy_correction(qs_env, ec_init=.FALSE., calculate_forces=.TRUE.)
