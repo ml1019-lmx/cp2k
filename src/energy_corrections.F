@@ -69,14 +69,10 @@ MODULE energy_corrections
    USE external_potential_types,        ONLY: get_potential,&
                                               gth_potential_type,&
                                               sgp_potential_type
-   USE input_constants,                 ONLY: ec_curvy_steps,&
-                                              ec_diagonalization,&
-                                              ec_functional_harris,&
-                                              ec_matrix_sign,&
-                                              ec_matrix_tc2,&
-                                              ec_matrix_trs4,&
-                                              ls_s_sqrt_ns,&
-                                              ls_s_sqrt_proot
+   USE input_constants,                 ONLY: &
+        ec_curvy_steps, ec_diagonalization, ec_functional_harris, ec_matrix_sign, ec_matrix_tc2, &
+        ec_matrix_trs4, ls_s_sqrt_ns, ls_s_sqrt_proot, vdw_pairpot_dftd3, vdw_pairpot_dftd3bj, &
+        xc_vdw_fun_pairpot
    USE input_section_types,             ONLY: section_get_ival,&
                                               section_get_lval,&
                                               section_get_rval,&
@@ -94,7 +90,9 @@ MODULE energy_corrections
    USE molecule_types,                  ONLY: molecule_type
    USE moments_utils,                   ONLY: get_reference_point
    USE particle_types,                  ONLY: particle_type
-   USE physcon,                         ONLY: debye
+   USE periodic_table,                  ONLY: ptable
+   USE physcon,                         ONLY: bohr,&
+                                              debye
    USE pw_env_types,                    ONLY: pw_env_get,&
                                               pw_env_type
    USE pw_methods,                      ONLY: pw_axpy,&
@@ -115,6 +113,7 @@ MODULE energy_corrections
    USE qs_collocate_density,            ONLY: calculate_rho_elec
    USE qs_core_energies,                ONLY: calculate_ecore_overlap
    USE qs_dispersion_pairpot,           ONLY: calculate_dispersion_pairpot
+   USE qs_dispersion_types,             ONLY: qs_dispersion_type
    USE qs_energy_types,                 ONLY: qs_energy_type
    USE qs_environment_types,            ONLY: get_qs_env,&
                                               qs_environment_type,&
@@ -1632,13 +1631,15 @@ CONTAINS
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'ec_build_neighborlist'
 
-      INTEGER                                            :: handle, ikind, nkind
+      INTEGER                                            :: handle, ikind, nkind, zat
       LOGICAL                                            :: gth_potential_present, &
                                                             sgp_potential_present, &
                                                             skip_load_balance_distributed
-      LOGICAL, ALLOCATABLE, DIMENSION(:)                 :: orb_present, ppl_present, ppnl_present
+      LOGICAL, ALLOCATABLE, DIMENSION(:)                 :: default_present, orb_present, &
+                                                            ppl_present, ppnl_present
       REAL(dp)                                           :: subcells
-      REAL(dp), ALLOCATABLE, DIMENSION(:)                :: orb_radius, ppl_radius, ppnl_radius
+      REAL(dp), ALLOCATABLE, DIMENSION(:)                :: c_radius, orb_radius, ppl_radius, &
+                                                            ppnl_radius
       REAL(dp), ALLOCATABLE, DIMENSION(:, :)             :: pair_radius
       TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
       TYPE(cell_type), POINTER                           :: cell
@@ -1649,7 +1650,10 @@ CONTAINS
       TYPE(gto_basis_set_type), POINTER                  :: basis_set
       TYPE(local_atoms_type), ALLOCATABLE, DIMENSION(:)  :: atom2d
       TYPE(molecule_type), DIMENSION(:), POINTER         :: molecule_set
+      TYPE(neighbor_list_set_p_type), DIMENSION(:), &
+         POINTER                                         :: sab_cn, sab_vdw
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
+      TYPE(qs_dispersion_type), POINTER                  :: dispersion_env
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       TYPE(qs_kind_type), POINTER                        :: qs_kind
       TYPE(qs_ks_env_type), POINTER                      :: ks_env
@@ -1661,8 +1665,8 @@ CONTAINS
       CALL get_qs_kind_set(qs_kind_set, gth_potential_present=gth_potential_present, &
                            sgp_potential_present=sgp_potential_present)
       nkind = SIZE(qs_kind_set)
-      ALLOCATE (orb_radius(nkind), ppl_radius(nkind), ppnl_radius(nkind))
-      ALLOCATE (orb_present(nkind), ppl_present(nkind), ppnl_present(nkind))
+      ALLOCATE (orb_radius(nkind), ppl_radius(nkind), ppnl_radius(nkind), c_radius(nkind))
+      ALLOCATE (orb_present(nkind), ppl_present(nkind), ppnl_present(nkind), default_present(nkind))
       ALLOCATE (pair_radius(nkind, nkind))
       ALLOCATE (atom2d(nkind))
 
@@ -1732,11 +1736,35 @@ CONTAINS
          END IF
       END IF
 
+      dispersion_env => ec_env%dispersion_env
+      sab_vdw => dispersion_env%sab_vdw
+      sab_cn => dispersion_env%sab_cn
+      IF (dispersion_env%type == xc_vdw_fun_pairpot) THEN
+         c_radius(:) = dispersion_env%rc_disp
+         default_present = .TRUE. !include all atoms in vdW (even without basis)
+         CALL pair_radius_setup(default_present, default_present, c_radius, c_radius, pair_radius)
+         CALL build_neighbor_lists(sab_vdw, particle_set, atom2d, cell, pair_radius, &
+                                   subcells=subcells, operator_type="PP", nlname="sab_vdw")
+         dispersion_env%sab_vdw => sab_vdw
+         IF (dispersion_env%pp_type == vdw_pairpot_dftd3 .OR. &
+             dispersion_env%pp_type == vdw_pairpot_dftd3bj) THEN
+            ! Build the neighbor lists for coordination numbers as needed by the DFT-D3 method
+            DO ikind = 1, nkind
+               CALL get_atomic_kind(atomic_kind_set(ikind), z=zat)
+               c_radius(ikind) = 4._dp*ptable(zat)%covalent_radius*bohr
+            END DO
+            CALL pair_radius_setup(default_present, default_present, c_radius, c_radius, pair_radius)
+            CALL build_neighbor_lists(sab_cn, particle_set, atom2d, cell, pair_radius, &
+                                      subcells=subcells, operator_type="PP", nlname="sab_cn")
+            dispersion_env%sab_cn => sab_cn
+         END IF
+      END IF
+
       ! Release work storage
       CALL atom2d_cleanup(atom2d)
       DEALLOCATE (atom2d)
-      DEALLOCATE (orb_present, ppl_present, ppnl_present)
-      DEALLOCATE (orb_radius, ppl_radius, ppnl_radius)
+      DEALLOCATE (orb_present, ppl_present, ppnl_present, default_present)
+      DEALLOCATE (orb_radius, ppl_radius, ppnl_radius, c_radius)
       DEALLOCATE (pair_radius)
 
       ! Task list
