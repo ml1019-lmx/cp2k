@@ -38,7 +38,7 @@ MODULE qs_tddfpt2_fhxc_forces
                                               cp_fm_vectorssum
    USE cp_gemm_interface,               ONLY: cp_gemm
    USE cp_log_handling,                 ONLY: cp_get_default_logger,&
-                                              cp_logger_get_default_unit_nr,&
+                                              cp_logger_get_default_io_unit,&
                                               cp_logger_type
    USE cp_para_types,                   ONLY: cp_para_env_type
    USE dbcsr_api,                       ONLY: &
@@ -190,7 +190,7 @@ CONTAINS
       CALL timeset(routineN, handle)
 
       logger => cp_get_default_logger()
-      iounit = cp_logger_get_default_unit_nr(logger)
+      iounit = cp_logger_get_default_io_unit(logger)
 
       CALL get_qs_env(qs_env, dft_control=dft_control)
       tddfpt_control => dft_control%tddfpt2_control
@@ -930,7 +930,7 @@ CONTAINS
       CPASSERT(ASSOCIATED(gs_mos))
 
       logger => cp_get_default_logger()
-      iounit = cp_logger_get_default_unit_nr(logger)
+      iounit = cp_logger_get_default_io_unit(logger)
 
       CALL get_qs_env(qs_env, dft_control=dft_control)
       tddfpt_control => dft_control%tddfpt2_control

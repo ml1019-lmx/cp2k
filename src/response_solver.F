@@ -36,7 +36,7 @@ MODULE response_solver
                                               cp_fm_type
    USE cp_gemm_interface,               ONLY: cp_gemm
    USE cp_log_handling,                 ONLY: cp_get_default_logger,&
-                                              cp_logger_get_default_unit_nr,&
+                                              cp_logger_get_default_io_unit,&
                                               cp_logger_type
    USE cp_para_types,                   ONLY: cp_para_env_type
    USE dbcsr_api,                       ONLY: &
@@ -190,11 +190,7 @@ CONTAINS
       CALL timeset(routineN, handle)
 
       logger => cp_get_default_logger()
-      IF (logger%para_env%ionode) THEN
-         iounit = cp_logger_get_default_unit_nr(logger, local=.TRUE.)
-      ELSE
-         iounit = -1
-      ENDIF
+      iounit = cp_logger_get_default_io_unit(logger)
 
       ! initialized linres_control
       NULLIFY (linres_control)
@@ -383,7 +379,7 @@ CONTAINS
       CALL timeset(routineN, handle)
 
       logger => cp_get_default_logger()
-      iounit = cp_logger_get_default_unit_nr(logger)
+      iounit = cp_logger_get_default_io_unit(logger)
 
       do_ex = .FALSE.
       IF (PRESENT(ex_env)) do_ex = .TRUE.
@@ -1073,7 +1069,7 @@ CONTAINS
       CALL timeset(routineN, handle)
 
       logger => cp_get_default_logger()
-      iounit = cp_logger_get_default_unit_nr(logger)
+      iounit = cp_logger_get_default_io_unit(logger)
 
       do_ex = .FALSE.
       IF (PRESENT(ex_env)) do_ex = .TRUE.

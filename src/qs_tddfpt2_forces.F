@@ -30,7 +30,7 @@ MODULE qs_tddfpt2_forces
                                               cp_fm_type
    USE cp_gemm_interface,               ONLY: cp_gemm
    USE cp_log_handling,                 ONLY: cp_get_default_logger,&
-                                              cp_logger_get_default_unit_nr,&
+                                              cp_logger_get_default_io_unit,&
                                               cp_logger_type
    USE cp_para_types,                   ONLY: cp_para_env_type
    USE dbcsr_api,                       ONLY: &
@@ -270,7 +270,7 @@ CONTAINS
       CALL timeset(routineN, handle)
 
       logger => cp_get_default_logger()
-      iounit = cp_logger_get_default_unit_nr(logger)
+      iounit = cp_logger_get_default_io_unit(logger)
 
       evect => ex_env%evect
 
@@ -434,7 +434,7 @@ CONTAINS
       CALL dbcsr_dot(matrix_pe, matrix_s, tmp)
       IF (ABS(tmp) > 1.e-08_dp) THEN
          logger => cp_get_default_logger()
-         iounit = cp_logger_get_default_unit_nr(logger)
+         iounit = cp_logger_get_default_io_unit(logger)
          CPWARN("Electron count of excitation density matrix is non-zero.")
          IF (iounit > 0) THEN
             WRITE (iounit, "(T2,A,T61,G20.10)") "Measured electron count is ", tmp
@@ -573,7 +573,7 @@ CONTAINS
          CALL pw_axpy(trho_g(ispin)%pw, rho_tot_gspace%pw)
          IF (ABS(total_rho) > 1.e-08_dp) THEN
             logger => cp_get_default_logger()
-            iounit = cp_logger_get_default_unit_nr(logger)
+            iounit = cp_logger_get_default_io_unit(logger)
             CPWARN("Real space electron count of excitation density is non-zero.")
             IF (iounit > 0) THEN
                WRITE (iounit, "(T2,A,T61,G20.10)") "Measured electron count is ", total_rho

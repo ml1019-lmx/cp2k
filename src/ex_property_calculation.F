@@ -20,7 +20,7 @@ MODULE ex_property_calculation
    USE cp_dbcsr_operations,             ONLY: dbcsr_allocate_matrix_set,&
                                               dbcsr_deallocate_matrix_set
    USE cp_log_handling,                 ONLY: cp_get_default_logger,&
-                                              cp_logger_get_default_unit_nr,&
+                                              cp_logger_get_default_io_unit,&
                                               cp_logger_type
    USE cp_output_handling,              ONLY: cp_p_file,&
                                               cp_print_key_finished_output,&
@@ -122,7 +122,7 @@ CONTAINS
       tb = (dft_control%qs_control%dftb .OR. dft_control%qs_control%xtb)
 
       logger => cp_get_default_logger()
-      iounit = cp_logger_get_default_unit_nr(logger)
+      iounit = cp_logger_get_default_io_unit(logger)
 
       print_key => section_vals_get_subs_vals(section_vals=qs_env%input, &
                                               subsection_name="DFT%PRINT%MOMENTS")
