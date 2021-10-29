@@ -127,7 +127,7 @@ CONTAINS
 !> \param qs_kind_set ...
 !> \param particle_set ...
 !> \param qs_env ...
-!> \param dft_section ...
+!> \param pdos_section ...
 !> \param ispin ...
 !> \param xas_mittle ...
 !> \param external_matrix_shalf ...
@@ -141,14 +141,14 @@ CONTAINS
 !> \version 1.0
 ! **************************************************************************************************
    SUBROUTINE calculate_projected_dos(mo_set, atomic_kind_set, qs_kind_set, particle_set, qs_env, &
-                                      dft_section, ispin, xas_mittle, external_matrix_shalf)
+                                      pdos_section, ispin, xas_mittle, external_matrix_shalf)
 
       TYPE(mo_set_type), POINTER                         :: mo_set
       TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       TYPE(qs_environment_type), POINTER                 :: qs_env
-      TYPE(section_vals_type), POINTER                   :: dft_section
+      TYPE(section_vals_type), POINTER                   :: pdos_section
       INTEGER, INTENT(IN), OPTIONAL                      :: ispin
       CHARACTER(LEN=default_string_length), INTENT(IN), &
          OPTIONAL                                        :: xas_mittle
@@ -201,8 +201,8 @@ CONTAINS
       NULLIFY (logger)
       logger => cp_get_default_logger()
       ionode = logger%para_env%ionode
-      should_output = BTEST(cp_print_key_should_output(logger%iter_info, dft_section, &
-                                                       "PRINT%PDOS"), cp_p_file)
+      should_output = BTEST(cp_print_key_should_output(logger%iter_info, pdos_section), &
+                            cp_p_file)
       output_unit = cp_logger_get_default_io_unit(logger)
 
       spin(1) = "ALPHA"
@@ -233,9 +233,9 @@ CONTAINS
                           nrow_global=nrow_global, &
                           ncol_global=ncol_global)
 
-      CALL section_vals_val_get(dft_section, "PRINT%PDOS%OUT_EACH_MO", i_val=out_each)
+      CALL section_vals_val_get(pdos_section, "OUT_EACH_MO", i_val=out_each)
       IF (out_each == -1) out_each = nao + 1
-      CALL section_vals_val_get(dft_section, "PRINT%PDOS%NLUMO", i_val=nlumo)
+      CALL section_vals_val_get(pdos_section, "NLUMO", i_val=nlumo)
       IF (nlumo == -1) nlumo = nao - homo
       do_virt = (nlumo > (nmo - homo))
       nvirt = nlumo - (nmo - homo)
@@ -292,7 +292,7 @@ CONTAINS
       IF (calc_matsh) CALL cp_fm_release(matrix_shalf)
       ! Array to store the PDOS per kind and angular momentum
       do_ldos = .FALSE.
-      ldos_section => section_vals_get_subs_vals(dft_section, "PRINT%PDOS%LDOS")
+      ldos_section => section_vals_get_subs_vals(pdos_section, "LDOS")
 
       CALL section_vals_get(ldos_section, n_repetition=nldos)
       IF (nldos > 0) THEN
@@ -342,7 +342,7 @@ CONTAINS
       END IF
 
       do_r_ldos = .FALSE.
-      ldos_section => section_vals_get_subs_vals(dft_section, "PRINT%PDOS%R_LDOS")
+      ldos_section => section_vals_get_subs_vals(pdos_section, "R_LDOS")
       CALL section_vals_get(ldos_section, n_repetition=n_r_ldos)
       IF (n_r_ldos > 0) THEN
          do_r_ldos = .TRUE.
@@ -501,7 +501,7 @@ CONTAINS
          END DO
       END IF
 
-      CALL section_vals_val_get(dft_section, "PRINT%PDOS%COMPONENTS", l_val=separate_components)
+      CALL section_vals_val_get(pdos_section, "COMPONENTS", l_val=separate_components)
       IF (separate_components) THEN
          ALLOCATE (pdos_array(nsoset(maxlgto), nkind, nmo + nvirt))
       ELSE
@@ -668,7 +668,7 @@ CONTAINS
       CALL cp_fm_release(matrix_shalfc)
       DEALLOCATE (vecbuffer)
 
-      CALL section_vals_val_get(dft_section, "PRINT%PDOS%APPEND", l_val=append)
+      CALL section_vals_val_get(pdos_section, "APPEND", l_val=append)
       IF (append .AND. iterstep > 1) THEN
          my_pos = "APPEND"
       ELSE
@@ -697,7 +697,7 @@ CONTAINS
             my_spin = 1
          END IF
 
-         iw = cp_print_key_unit_nr(logger, dft_section, "PRINT%PDOS", &
+         iw = cp_print_key_unit_nr(logger, pdos_section, &
                                    extension=".pdos", file_position=my_pos, file_action=my_act, &
                                    file_form="FORMATTED", middle_name=TRIM(my_mittle))
          IF (iw > 0) THEN
@@ -742,8 +742,7 @@ CONTAINS
                END DO
             END IF
          END IF
-         CALL cp_print_key_finished_output(iw, logger, dft_section, &
-                                           "PRINT%PDOS")
+         CALL cp_print_key_finished_output(iw, logger, pdos_section)
 
       END DO ! ikind
 
@@ -765,7 +764,7 @@ CONTAINS
                my_spin = 1
             END IF
 
-            iw = cp_print_key_unit_nr(logger, dft_section, "PRINT%PDOS", &
+            iw = cp_print_key_unit_nr(logger, pdos_section, &
                                       extension=".pdos", file_position=my_pos, file_action=my_act, &
                                       file_form="FORMATTED", middle_name=TRIM(my_mittle))
             IF (iw > 0) THEN
@@ -811,8 +810,7 @@ CONTAINS
                   END DO
                END IF
             END IF
-            CALL cp_print_key_finished_output(iw, logger, dft_section, &
-                                              "PRINT%PDOS")
+            CALL cp_print_key_finished_output(iw, logger, pdos_section)
          END IF ! maxl>0
       END DO ! ildos
 
@@ -836,7 +834,7 @@ CONTAINS
             my_spin = 1
          END IF
 
-         iw = cp_print_key_unit_nr(logger, dft_section, "PRINT%PDOS", &
+         iw = cp_print_key_unit_nr(logger, pdos_section, &
                                    extension=".pdos", file_position=my_pos, file_action=my_act, &
                                    file_form="FORMATTED", middle_name=TRIM(my_mittle))
          IF (iw > 0) THEN
@@ -858,8 +856,7 @@ CONTAINS
             END DO
 
          END IF
-         CALL cp_print_key_finished_output(iw, logger, dft_section, &
-                                           "PRINT%PDOS")
+         CALL cp_print_key_finished_output(iw, logger, pdos_section)
       END DO
 
       ! deallocate local variables

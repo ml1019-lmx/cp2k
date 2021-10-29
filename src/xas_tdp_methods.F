@@ -2452,7 +2452,7 @@ CONTAINS
       TYPE(mo_set_type), POINTER                         :: mo_set
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
-      TYPE(section_vals_type), POINTER                   :: print_key
+      TYPE(section_vals_type), POINTER                   :: pdos_section, print_key
 
       NULLIFY (atomic_kind_set, particle_set, qs_kind_set, mo_set, lr_evals, lr_coeffs, mo_coeff)
       NULLIFY (mo_struct, para_env, blacs_env, fm_struct, matrix_s, work_fm, print_key, logger)
@@ -2627,8 +2627,9 @@ CONTAINS
                          TRIM(domon)//'_'//TRIM(excite)
 
             IF (do_pdos) THEN
+               pdos_section => section_vals_get_subs_vals(xas_tdp_section, "PRINT%PDOS")
                CALL calculate_projected_dos(mo_set, atomic_kind_set, qs_kind_set, particle_set, &
-                                            qs_env, xas_tdp_section, ispin, xas_mittle, &
+                                            qs_env, pdos_section, ispin, xas_mittle, &
                                             external_matrix_shalf=xas_tdp_env%matrix_shalf)
             END IF
 

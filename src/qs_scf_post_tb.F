@@ -434,10 +434,10 @@ CONTAINS
                   END IF
                   IF (dft_control%nspins == 2) THEN
                      CALL calculate_projected_dos(mos(ispin)%mo_set, atomic_kind_set, &
-                                                  qs_kind_set, particle_set, qs_env, dft_section, ispin=ispin)
+                                                  qs_kind_set, particle_set, qs_env, print_key, ispin=ispin)
                   ELSE
                      CALL calculate_projected_dos(mos(ispin)%mo_set, atomic_kind_set, &
-                                                  qs_kind_set, particle_set, qs_env, dft_section)
+                                                  qs_kind_set, particle_set, qs_env, print_key)
                   END IF
                END DO
             END IF

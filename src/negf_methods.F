@@ -10,6 +10,7 @@
 ! **************************************************************************************************
 
 MODULE negf_methods
+   USE atomic_kind_types,               ONLY: atomic_kind_type
    USE bibliography,                    ONLY: Bailey2006,&
                                               Papior2017,&
                                               cite_reference
@@ -24,10 +25,13 @@ MODULE negf_methods
         cp_cfm_release, cp_cfm_retain, cp_cfm_set_submatrix, cp_cfm_start_copy_general, &
         cp_cfm_to_fm, cp_cfm_type
    USE cp_control_types,                ONLY: dft_control_type
-   USE cp_dbcsr_operations,             ONLY: dbcsr_allocate_matrix_set
+   USE cp_dbcsr_operations,             ONLY: copy_dbcsr_to_fm,&
+                                              dbcsr_allocate_matrix_set
    USE cp_fm_basic_linalg,              ONLY: cp_fm_scale,&
                                               cp_fm_scale_and_add,&
-                                              cp_fm_trace
+                                              cp_fm_trace,&
+                                              cp_fm_triangular_invert
+   USE cp_fm_cholesky,                  ONLY: cp_fm_cholesky_decompose
    USE cp_fm_struct,                    ONLY: cp_fm_struct_create,&
                                               cp_fm_struct_release,&
                                               cp_fm_struct_type
@@ -48,13 +52,17 @@ MODULE negf_methods
    USE dbcsr_api,                       ONLY: dbcsr_copy,&
                                               dbcsr_deallocate_matrix,&
                                               dbcsr_dot,&
+                                              dbcsr_get_info,&
                                               dbcsr_init_p,&
                                               dbcsr_p_type
    USE force_env_types,                 ONLY: force_env_get,&
                                               force_env_p_type,&
                                               force_env_type
    USE global_types,                    ONLY: global_environment_type
-   USE input_constants,                 ONLY: negfint_method_cc,&
+   USE input_constants,                 ONLY: cholesky_dbcsr,&
+                                              cholesky_inverse,&
+                                              cholesky_off,&
+                                              negfint_method_cc,&
                                               negfint_method_simpson
    USE input_section_types,             ONLY: section_vals_get_subs_vals,&
                                               section_vals_type,&
@@ -104,6 +112,7 @@ MODULE negf_methods
    USE negf_subgroup_types,             ONLY: negf_sub_env_create,&
                                               negf_sub_env_release,&
                                               negf_subgroup_env_type
+   USE particle_types,                  ONLY: particle_type
    USE physcon,                         ONLY: e_charge,&
                                               evolt,&
                                               kelvin,&
@@ -113,13 +122,17 @@ MODULE negf_methods
    USE qs_environment_types,            ONLY: get_qs_env,&
                                               qs_environment_type
    USE qs_gspace_mixing,                ONLY: gspace_mixing
+   USE qs_kind_types,                   ONLY: qs_kind_type
    USE qs_ks_methods,                   ONLY: qs_ks_build_kohn_sham_matrix
    USE qs_mixing_utils,                 ONLY: mixing_allocate,&
                                               mixing_init
+   USE qs_mo_types,                     ONLY: mo_set_p_type
+   USE qs_pdos,                         ONLY: calculate_projected_dos
    USE qs_rho_methods,                  ONLY: qs_rho_update_rho
    USE qs_rho_types,                    ONLY: qs_rho_get,&
                                               qs_rho_type
-   USE qs_scf_methods,                  ONLY: scf_env_density_mixing
+   USE qs_scf_methods,                  ONLY: eigensolver,&
+                                              scf_env_density_mixing
    USE qs_subsys_types,                 ONLY: qs_subsys_type
    USE string_utilities,                ONLY: integer_to_string
 #include "./base/base_uses.f90"
@@ -174,7 +187,8 @@ CONTAINS
       TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(section_vals_type), POINTER                   :: negf_contact_section, &
                                                             negf_mixing_section, negf_section, &
-                                                            print_section, root_section
+                                                            pdos_section, print_section, &
+                                                            root_section
 
       CALL timeset(routineN, handle)
       logger => cp_get_default_logger()
@@ -341,6 +355,15 @@ CONTAINS
             CALL cp_print_key_finished_output(print_unit, logger, print_section, "TRANSMISSION")
          END IF
 
+         ! PDOS
+         should_output = BTEST(cp_print_key_should_output(logger%iter_info, print_section, "PDOS"), cp_p_file)
+
+         IF (should_output) THEN
+            pdos_section => section_vals_get_subs_vals(print_section, "PDOS")
+
+            CALL force_env_get(force_env, qs_env=qs_env)
+            CALL negf_print_pdos(qs_env, pdos_section, cholesky_inverse)
+         END IF
       END IF
 
       CALL negf_env_release(negf_env)
@@ -1269,8 +1292,9 @@ CONTAINS
 
       DO image = 1, nimages
          DO ispin = 1, nspins
-            CALL dbcsr_copy(matrix_b=matrix_ks_qs_kp(ispin, image)%matrix, matrix_a=matrix_ks_initial_kp(ispin, image)%matrix)
-            CALL dbcsr_copy(matrix_b=rho_ao_qs_kp(ispin, image)%matrix, matrix_a=rho_ao_initial_kp(ispin, image)%matrix)
+            ! do not restore the original Kohn-Sham and density matrices, so we can compute PDOS based on NEGF self-consistent KS matrix
+            !CALL dbcsr_copy(matrix_b=matrix_ks_qs_kp(ispin, image)%matrix, matrix_a=matrix_ks_initial_kp(ispin, image)%matrix)
+            !CALL dbcsr_copy(matrix_b=rho_ao_qs_kp(ispin, image)%matrix, matrix_a=rho_ao_initial_kp(ispin, image)%matrix)
 
             CALL dbcsr_deallocate_matrix(matrix_ks_initial_kp(ispin, image)%matrix)
             CALL dbcsr_deallocate_matrix(rho_ao_initial_kp(ispin, image)%matrix)
@@ -3050,4 +3074,97 @@ CONTAINS
       DEALLOCATE (transm_coeff, xnodes)
       CALL timestop(handle)
    END SUBROUTINE negf_print_transmission
+
+! **************************************************************************************************
+!> \brief ...
+!> \param qs_env ...
+!> \param pdos_section ...
+!> \param cholesky_method ...
+! **************************************************************************************************
+   SUBROUTINE negf_print_pdos(qs_env, pdos_section, cholesky_method)
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      TYPE(section_vals_type), POINTER                   :: pdos_section
+      INTEGER, INTENT(in)                                :: cholesky_method
+
+      CHARACTER(LEN=*), PARAMETER                        :: routineN = 'negf_print_pdos'
+
+      INTEGER                                            :: cholesky_method_inout, handle, ispin, &
+                                                            nao, nspins
+      LOGICAL                                            :: do_kpoints
+      TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
+      TYPE(cp_blacs_env_type), POINTER                   :: blacs_env
+      TYPE(cp_fm_struct_type), POINTER                   :: fm_struct
+      TYPE(cp_fm_type), POINTER                          :: matrix_ks_fm, ortho_fm, work_fm
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_ks, matrix_s
+      TYPE(dft_control_type), POINTER                    :: dft_control
+      TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mos
+      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
+      TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
+
+      CALL timeset(routineN, handle)
+
+      CALL get_qs_env(qs_env, blacs_env=blacs_env, dft_control=dft_control, do_kpoints=do_kpoints)
+      nspins = dft_control%nspins
+
+      IF (do_kpoints) THEN
+         CPWARN("Projected density of states (pDOS) is not implemented for k points")
+      ELSE
+         NULLIFY (atomic_kind_set, matrix_ks, matrix_s, mos, particle_set, qs_kind_set)
+
+         CALL get_qs_env(qs_env, &
+                         atomic_kind_set=atomic_kind_set, &
+                         matrix_ks=matrix_ks, &
+                         matrix_s=matrix_s, &
+                         mos=mos, &
+                         particle_set=particle_set, &
+                         qs_kind_set=qs_kind_set)
+
+         CPASSERT(ASSOCIATED(mos))
+
+         IF (cholesky_method == cholesky_dbcsr) THEN
+            CPABORT('CHOLESKY DBCSR_INVERSE is not implemented in NEGF')
+         ELSE IF (cholesky_method == cholesky_off) THEN
+            CPABORT('CHOLESKY OFF is not implemented in NEGF.')
+         ELSE
+            CALL dbcsr_get_info(matrix=matrix_s(1)%matrix, nfullrows_total=nao)
+            CALL cp_fm_struct_create(fm_struct, nrow_global=nao, ncol_global=nao, context=blacs_env)
+            CALL cp_fm_create(matrix_ks_fm, fm_struct)
+            CALL cp_fm_create(ortho_fm, fm_struct)
+            CALL cp_fm_create(work_fm, fm_struct)
+            CALL cp_fm_struct_release(fm_struct)
+
+            CALL copy_dbcsr_to_fm(matrix_s(1)%matrix, ortho_fm)
+            CALL cp_fm_cholesky_decompose(ortho_fm)
+            IF (cholesky_method == cholesky_inverse) THEN
+               CALL cp_fm_triangular_invert(ortho_fm)
+            END IF
+
+            DO ispin = 1, nspins
+               CALL copy_dbcsr_to_fm(matrix_ks(ispin)%matrix, matrix_ks_fm)
+
+               ! store 'cholesky_method' in a temporary variable, as the subroutine eigensolver() updates this variable
+               cholesky_method_inout = cholesky_method
+               CALL eigensolver(matrix_ks_fm=matrix_ks_fm, mo_set=mos(ispin)%mo_set, ortho=ortho_fm, &
+                                work=work_fm, cholesky_method=cholesky_method_inout, &
+                                do_level_shift=.FALSE., level_shift=0.0_dp, matrix_u_fm=null(), use_jacobi=.FALSE.)
+            END DO
+
+            CALL cp_fm_release(matrix_ks_fm)
+            CALL cp_fm_release(ortho_fm)
+            CALL cp_fm_release(work_fm)
+
+            DO ispin = 1, nspins
+               IF (nspins > 1) THEN
+                  CALL calculate_projected_dos(mos(ispin)%mo_set, atomic_kind_set, &
+                                               qs_kind_set, particle_set, qs_env, pdos_section, ispin=ispin)
+               ELSE
+                  CALL calculate_projected_dos(mos(ispin)%mo_set, atomic_kind_set, &
+                                               qs_kind_set, particle_set, qs_env, pdos_section)
+               END IF
+            END DO
+         END IF
+
+      END IF
+      CALL timestop(handle)
+   END SUBROUTINE negf_print_pdos
 END MODULE negf_methods

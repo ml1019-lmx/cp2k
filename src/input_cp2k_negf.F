@@ -20,6 +20,7 @@ MODULE input_cp2k_negf
                                               silent_print_level
    USE input_constants,                 ONLY: negfint_method_cc,&
                                               negfint_method_simpson
+   USE input_cp2k_dft,                  ONLY: create_pdos_section
    USE input_keyword_types,             ONLY: keyword_create,&
                                               keyword_release,&
                                               keyword_type
@@ -222,6 +223,10 @@ CONTAINS
       CALL section_release(print_key)
 
       CALL create_print_dos_section(print_key, "TRANSMISSION", "the transmission coefficient")
+      CALL section_add_subsection(subsection, print_key)
+      CALL section_release(print_key)
+
+      CALL create_pdos_section(print_key)
       CALL section_add_subsection(subsection, print_key)
       CALL section_release(print_key)
 

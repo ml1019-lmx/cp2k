@@ -1288,6 +1288,7 @@ CONTAINS
       TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
+      TYPE(section_vals_type), POINTER                   :: pdos_section
 
       NULLIFY (atomic_kind_set, particle_set, qs_kind_set)
       xas_mittle = 'xasat'//TRIM(ADJUSTL(cp_to_string(iatom)))//'_'
@@ -1296,10 +1297,11 @@ CONTAINS
                       atomic_kind_set=atomic_kind_set, &
                       particle_set=particle_set, &
                       qs_kind_set=qs_kind_set)
+      pdos_section => section_vals_get_subs_vals(xas_section, "PRINT%PDOS")
 
       DO ispin = 1, 2
          CALL calculate_projected_dos(mos(ispin)%mo_set, atomic_kind_set, qs_kind_set, particle_set, qs_env, &
-                                      xas_section, ispin, xas_mittle)
+                                      pdos_section, ispin, xas_mittle)
       END DO
 
    END SUBROUTINE xas_pdos

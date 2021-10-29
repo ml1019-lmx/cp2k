@@ -1613,7 +1613,8 @@ CONTAINS
       TYPE(qs_rho_type), POINTER                         :: rho
       TYPE(qs_subsys_type), POINTER                      :: subsys
       TYPE(scf_control_type), POINTER                    :: scf_control
-      TYPE(section_vals_type), POINTER                   :: dft_section, input, sprint_section
+      TYPE(section_vals_type), POINTER                   :: dft_section, input, pdos_section, &
+                                                            sprint_section
 
       CALL timeset(routineN, handle)
 
@@ -1676,6 +1677,7 @@ CONTAINS
          ! Print the projected density of states (pDOS) for each atomic kind
          IF (BTEST(cp_print_key_should_output(logger%iter_info, dft_section, "PRINT%PDOS"), &
                    cp_p_file)) THEN
+            pdos_section => section_vals_get_subs_vals(dft_section, "PRINT%PDOS")
             IF (do_kpoints) THEN
                CPWARN("Projected density of states (pDOS) is not implemented for k points")
             ELSE
@@ -1704,10 +1706,10 @@ CONTAINS
                   END IF
                   IF (dft_control%nspins == 2) THEN
                      CALL calculate_projected_dos(mos(ispin)%mo_set, atomic_kind_set, &
-                                                  qs_kind_set, particle_set, qs_env, dft_section, ispin=ispin)
+                                                  qs_kind_set, particle_set, qs_env, pdos_section, ispin=ispin)
                   ELSE
                      CALL calculate_projected_dos(mos(ispin)%mo_set, atomic_kind_set, &
-                                                  qs_kind_set, particle_set, qs_env, dft_section)
+                                                  qs_kind_set, particle_set, qs_env, pdos_section)
                   END IF
                   ! With ADMM, we have to undo the modification of the Kohn-Sham matrix
                   IF (dft_control%do_admm) THEN

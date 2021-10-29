@@ -164,6 +164,7 @@ MODULE input_cp2k_dft
    PUBLIC :: create_interp_section, create_localize_section
    PUBLIC :: create_ddapc_restraint_section
    PUBLIC :: create_mgrid_section
+   PUBLIC :: create_pdos_section
 
 CONTAINS
 
