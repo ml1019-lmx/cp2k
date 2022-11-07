@@ -55,7 +55,8 @@ MODULE qs_energy_utils
    USE qs_rho_types,                    ONLY: qs_rho_get,&
                                               qs_rho_type
    USE qs_scf,                          ONLY: scf
-   USE qs_tddfpt2_methods,              ONLY: tddfpt
+   USE qs_tddfpt2_methods,              ONLY: tddfpt,&
+                                              tddfpt_ipa
    USE scf_control_types,               ONLY: scf_control_type
    USE tip_scan_methods,                ONLY: tip_scanning
    USE xas_methods,                     ONLY: xas
@@ -297,7 +298,11 @@ CONTAINS
       END IF
 
       IF (dft_control%tddfpt2_control%enabled) THEN
-         CALL tddfpt(qs_env, calc_forces)
+         IF (dft_control%tddfpt2_control%independent_particle) THEN
+            CALL tddfpt_ipa(qs_env)
+         ELSE
+            CALL tddfpt(qs_env, calc_forces)
+         END IF
       END IF
 
       ! tip scan

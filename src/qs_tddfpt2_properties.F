@@ -35,6 +35,7 @@ MODULE qs_tddfpt2_properties
                                               cp_fm_struct_type
    USE cp_fm_types,                     ONLY: cp_fm_create,&
                                               cp_fm_get_info,&
+                                              cp_fm_get_submatrix,&
                                               cp_fm_p_type,&
                                               cp_fm_release,&
                                               cp_fm_set_all,&
@@ -60,7 +61,8 @@ MODULE qs_tddfpt2_properties
    USE input_section_types,             ONLY: section_vals_get_subs_vals,&
                                               section_vals_type,&
                                               section_vals_val_get
-   USE kahan_sum,                       ONLY: accurate_dot_product
+   USE kahan_sum,                       ONLY: accurate_dot_product,&
+                                              accurate_sum
    USE kinds,                           ONLY: default_path_length,&
                                               dp,&
                                               int_8
@@ -108,7 +110,8 @@ MODULE qs_tddfpt2_properties
                                               qs_subsys_type
    USE qs_tddfpt2_types,                ONLY: tddfpt_ground_state_mos
    USE string_utilities,                ONLY: integer_to_string
-   USE util,                            ONLY: sort
+   USE util,                            ONLY: locate,&
+                                              sort
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE
@@ -123,6 +126,7 @@ MODULE qs_tddfpt2_properties
 
    PUBLIC :: tddfpt_dipole_operator, tddfpt_print_summary, tddfpt_print_excitation_analysis, &
              tddfpt_print_nto_analysis
+   PUBLIC :: ipatddfpt_print_summary
 
 ! **************************************************************************************************
 
@@ -652,6 +656,169 @@ CONTAINS
 
       CALL timestop(handle)
    END SUBROUTINE tddfpt_print_summary
+
+! >>> DEBUG INDEPENDENT PARTICLE APPROXIMATION
+! **************************************************************************************************
+!> \brief ...
+!> \param log_unit ...
+!> \param states_info ...
+!> \param evals ...
+!> \param gs_mos ...
+!> \param mult ...
+!> \param dipole_op_mos_occ ...
+!> \param dipole_form ...
+! **************************************************************************************************
+   SUBROUTINE ipatddfpt_print_summary(log_unit, states_info, evals, gs_mos, mult, &
+                                     dipole_op_mos_occ, dipole_form)
+      INTEGER, INTENT(in)                                :: log_unit
+      INTEGER, DIMENSION(:, :), INTENT(in)               :: states_info
+      REAL(kind=dp), DIMENSION(:), INTENT(in)            :: evals
+      TYPE(tddfpt_ground_state_mos), DIMENSION(:), &
+         INTENT(in)                                      :: gs_mos
+      INTEGER, INTENT(in)                                :: mult
+      TYPE(cp_fm_p_type), DIMENSION(:, :), INTENT(in)    :: dipole_op_mos_occ
+      INTEGER, INTENT(in)                                :: dipole_form
+
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'ipatddfpt_print_summary'
+
+      CHARACTER(len=1)                                   :: lsd_str
+      CHARACTER(len=20)                                  :: mult_str
+      CHARACTER(len=5)                                   :: spin_label
+      INTEGER :: handle, iao_local, ideriv, imo_occ, imo_virt, imo_virt_local, ispin, istate, nao, &
+         nao_local, nmo_occ, nmo_virt_local, nspins, nstates
+      INTEGER, DIMENSION(:), POINTER                     :: col_indices, row_indices
+      INTEGER, DIMENSION(maxspins)                       :: nmo_occ_print
+      REAL(kind=dp)                                      :: osc_strength
+      REAL(kind=dp), ALLOCATABLE, DIMENSION(:)           :: rdata_tmp
+      REAL(kind=dp), ALLOCATABLE, DIMENSION(:, :)        :: trans_dipoles
+      REAL(kind=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: dipole_op_mos_occ_rdata
+      REAL(kind=dp), CONTIGUOUS, DIMENSION(:, :), &
+         POINTER                                         :: mos_virt_rdata
+      TYPE(cp_para_env_type), POINTER                    :: para_env
+
+      CALL timeset(routineN, handle)
+
+      nspins = SIZE(gs_mos, 1)
+      nstates = SIZE(states_info, 2)
+
+      IF (nspins > 1) THEN
+         lsd_str = 'U'
+      ELSE
+         lsd_str = 'R'
+      END IF
+
+      ! *** summary header ***
+      IF (log_unit > 0) THEN
+         CALL integer_to_string(mult, mult_str)
+         WRITE (log_unit, '(/,1X,A1,A,1X,A)') lsd_str, "-TDDFPT states of multiplicity", TRIM(mult_str)
+         SELECT CASE (dipole_form)
+         CASE (tddfpt_dipole_berry)
+            WRITE (log_unit, '(1X,A,/)') "Transition dipoles calculated using Berry operator formulation"
+         CASE (tddfpt_dipole_length)
+            WRITE (log_unit, '(1X,A,/)') "Transition dipoles calculated using length formulation"
+         CASE (tddfpt_dipole_velocity)
+            WRITE (log_unit, '(1X,A,/)') "Transition dipoles calculated using velocity formulation"
+         CASE DEFAULT
+            CPABORT("Unimplemented form of the dipole operator")
+         END SELECT
+
+         WRITE (log_unit, '(T11,A,T19,A,T37,A,T69,A,T87,A,T103,A)') "State", "Excitation", &
+            "Transition dipole (a.u.)", "Oscillator", "Occupied ->", "Virtual"
+         WRITE (log_unit, '(T11,A,T19,A,T37,A,T49,A,T61,A,T67,A,T88,A,T103,A)') "number", "energy (eV)", &
+            "x", "y", "z", "strength (a.u.)", "orbital", "orbital"
+         WRITE (log_unit, '(T10,72("-"))')
+      END IF
+
+      ! transition dipole moment
+      ALLOCATE (trans_dipoles(nderivs, nstates))
+      trans_dipoles(:, :) = 0.0_dp
+
+      ! nspins == 1 .AND. mult == 3 : spin-flip transitions are forbidden due to symmetry reasons
+      IF (nspins > 1 .OR. mult == 1) THEN
+         DO ispin = 1, nspins
+            CALL cp_fm_get_info(dipole_op_mos_occ(1, ispin)%matrix, nrow_global=nao, ncol_global=nmo_occ)
+            ALLOCATE (dipole_op_mos_occ_rdata(nao, nmo_occ, nderivs))
+            DO ideriv = 1, nderivs
+               CALL cp_fm_get_submatrix(dipole_op_mos_occ(ideriv, ispin)%matrix, dipole_op_mos_occ_rdata(:, :, ideriv))
+            END DO
+
+            CALL cp_fm_get_info(gs_mos(ispin)%mos_virt, nrow_local=nao_local, ncol_local=nmo_virt_local, &
+                                row_indices=row_indices, col_indices=col_indices, local_data=mos_virt_rdata)
+            ALLOCATE (rdata_tmp(nao_local))
+
+            DO istate = 1, nstates
+               IF (states_info(3, istate) == ispin) THEN
+                  imo_occ = states_info(1, istate)
+                  imo_virt = states_info(2, istate)
+                  imo_virt_local = locate(col_indices, imo_virt)
+
+                  IF (imo_virt_local > 0) THEN
+                     DO ideriv = 1, nderivs
+                        DO iao_local = 1, nao_local
+                           rdata_tmp(iao_local) = mos_virt_rdata(iao_local, imo_virt_local)* &
+                                                  dipole_op_mos_occ_rdata(row_indices(iao_local), imo_occ, ideriv)
+                        END DO
+
+                        trans_dipoles(ideriv, istate) = accurate_sum(rdata_tmp)
+                     END DO
+                  END IF
+               END IF
+            END DO
+
+            DEALLOCATE (rdata_tmp)
+            DEALLOCATE (dipole_op_mos_occ_rdata)
+         END DO
+
+         CALL cp_fm_get_info(gs_mos(1)%mos_virt, para_env=para_env)
+         CALL mp_sum(trans_dipoles, para_env%group)
+
+         IF (nspins == 1) THEN
+            !trans_dipoles(:, :, 1) = SQRT(2.0_dp)*trans_dipoles(:, :, 1)
+            trans_dipoles(:, :) = SQRT(2.0_dp)*trans_dipoles(:, :)
+         !ELSE ! independent particles approximation : either alpha or beta component is present
+         !   trans_dipoles(:, :, 1) = SQRT(trans_dipoles(:, :, 1)**2 + trans_dipoles(:, :, 2)**2)
+         END IF
+      END IF
+
+      DO ispin = 1, nspins
+         CALL cp_fm_get_info(dipole_op_mos_occ(1, ispin)%matrix, ncol_global=nmo_occ_print(ispin))
+      END DO
+      IF (nspins == 1) THEN
+         ispin = 1
+         spin_label = '     '
+      END IF
+
+      ! *** summary information ***
+      DO istate = 1, nstates
+         osc_strength = 2.0_dp/3.0_dp*evals(istate)* &
+                        accurate_dot_product(trans_dipoles(:, istate), trans_dipoles(:, istate))
+         !ostrength(istate) = osc_strength
+         IF (log_unit > 0) THEN
+            IF (nspins > 1) THEN
+               ispin = states_info(3, istate)
+               IF (ispin == 1) THEN
+                  spin_label = '(alp)'
+               ELSE
+                  spin_label = '(bet)'
+               END IF
+            END IF
+
+            WRITE (log_unit, '(1X,A,T8,I8,T19,F11.5,T31,3(1X,ES11.4E2),T69,ES12.5E2,T81,I8,T90,A5,T96,I8,T105,A5)') &
+               "TDDFPT|", istate, evals(istate)*evolt, trans_dipoles(1:nderivs, istate), osc_strength, &
+               states_info(1, istate), spin_label, states_info(2, istate) + nmo_occ_print(ispin), spin_label
+         END IF
+      END DO
+
+      ! punch a checksum for the regs
+      IF (log_unit > 0) THEN
+         WRITE (log_unit, '(/,T2,A,E14.6)') 'TDDFPT : CheckSum  =', SQRT(SUM(evals**2))
+      END IF
+
+      DEALLOCATE (trans_dipoles)
+
+      CALL timestop(handle)
+   END SUBROUTINE ipatddfpt_print_summary
+! <<< DEBUG INDEPENDENT PARTICLE APPROXIMATION
 
 ! **************************************************************************************************
 !> \brief Print excitation analysis.

@@ -442,6 +442,10 @@ MODULE cp_control_types
    TYPE tddfpt2_control_type
       !> compute TDDFPT excitation energies and oscillator strengths
       LOGICAL                              :: enabled
+      !> independent particles approximation (skip TDDFT iterations)
+      LOGICAL                              :: independent_particle
+      !> maximum eigenvalue to consider (independent particles approximation)
+      REAL(KIND=dp)                        :: ev_max
       !> number of excited states to converge
       INTEGER                              :: nstates
       !> maximal number of iterations to be performed
