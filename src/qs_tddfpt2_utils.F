@@ -94,9 +94,201 @@ MODULE qs_tddfpt2_utils
    PUBLIC :: tddfpt_guess_vectors, tddfpt_init_mos, tddfpt_oecorr
    PUBLIC :: tddfpt_total_number_of_states
 
+   PUBLIC :: ipatddfpt_number_of_active_states, ipatddfpt_guess_vectors
+
 ! **************************************************************************************************
 
 CONTAINS
+
+! >>> DEBUG INDEPENDENT PARTICLE APPROXIMATION
+! **************************************************************************************************
+!> \brief ...
+!> \param gs_mos ...
+!> \param max_eval ...
+!> \return ...
+! **************************************************************************************************
+   PURE FUNCTION ipatddfpt_number_of_active_states(gs_mos, max_eval) RESULT(nstates)
+      TYPE(tddfpt_ground_state_mos), DIMENSION(:), &
+         INTENT(in)                                      :: gs_mos
+      REAL(kind=dp), INTENT(in)                          :: max_eval
+      INTEGER(kind=int_8)                                :: nstates
+
+      INTEGER                                            :: imo_occ, imo_virt, ispin, nmo_occ, &
+                                                            nmo_virt, nspins
+      REAL(kind=dp)                                      :: e_occ
+
+      IF (max_eval > 0.0_dp) THEN
+         nspins = SIZE(gs_mos)
+         nstates = 0_int_8
+
+         DO ispin = 1, nspins
+            nmo_occ = SIZE(gs_mos(ispin)%evals_occ)
+            nmo_virt = SIZE(gs_mos(ispin)%evals_virt)
+
+            DO imo_occ = 1, nmo_occ
+               ! Here imo_occ enumerate Occupied orbitals in inverse order (from the last to the first element)
+               e_occ = gs_mos(ispin)%evals_occ(nmo_occ - imo_occ + 1)
+
+               DO imo_virt = 1, nmo_virt
+                  IF (gs_mos(ispin)%evals_virt(imo_virt) - e_occ <= max_eval) THEN
+                     nstates = nstates + 1_int_8
+                  ELSE
+                     EXIT
+                  END IF
+               END DO
+            END DO
+         END DO
+      ELSE
+         nstates = tddfpt_total_number_of_states(gs_mos)
+      END IF
+
+   END FUNCTION ipatddfpt_number_of_active_states
+
+! **************************************************************************************************
+!> \brief ...
+!> \param states_info ...
+!> \param evals ...
+!> \param gs_mos ...
+!> \param max_eval ...
+!> \param log_unit ...
+! states_info(1, istate) -- from occupied orbital
+! states_info(2, istate) -- to virtual orbital
+! states_info(3, istate) -- spin
+! **************************************************************************************************
+   SUBROUTINE ipatddfpt_guess_vectors(states_info, evals, gs_mos, max_eval, log_unit)
+      INTEGER, DIMENSION(:, :), INTENT(out)              :: states_info
+      REAL(kind=dp), DIMENSION(:), INTENT(out)           :: evals
+      TYPE(tddfpt_ground_state_mos), DIMENSION(:), &
+         INTENT(in)                                      :: gs_mos
+      REAL(kind=dp), INTENT(in)                          :: max_eval
+      INTEGER, INTENT(in)                                :: log_unit
+
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'ipatddfpt_guess_vectors'
+
+      CHARACTER(len=5)                                   :: spin_label
+      INTEGER                                            :: handle, imo_occ, imo_virt, ind, ispin, &
+                                                            istate, nspins, nstates, &
+                                                            nstates_selected
+      INTEGER(kind=int_8)                                :: nstates_selected_int8
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: inds
+      INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: states_info_selected
+      INTEGER, DIMENSION(maxspins)                       :: nmo_occ_avail, nmo_occ_selected, &
+                                                            nmo_virt_selected
+      REAL(kind=dp)                                      :: e_occ, max_eval_local
+      REAL(kind=dp), ALLOCATABLE, DIMENSION(:)           :: e_virt_minus_occ
+
+      CALL timeset(routineN, handle)
+
+      nspins = SIZE(gs_mos, 1)
+      nstates = SIZE(states_info, 2)
+
+      IF (max_eval > 0.0_dp) THEN
+         max_eval_local = max_eval
+      ELSE
+         max_eval_local = HUGE(max_eval_local)
+      END IF
+
+      DO ispin = 1, nspins
+         ! number of occupied orbitals for each spin component
+         nmo_occ_avail(ispin) = SIZE(gs_mos(ispin)%evals_occ)
+         ! number of occupied and virtual orbitals which can potentially
+         ! contribute to the excited states in question.
+         nmo_occ_selected(ispin) = MIN(nmo_occ_avail(ispin), nstates)
+         nmo_virt_selected(ispin) = MIN(SIZE(gs_mos(ispin)%evals_virt), nstates)
+
+         !CALL cp_fm_get_info(gs_mos(ispin)%mos_occ, matrix_struct=fm_struct_evects(ispin)%struct)
+      END DO
+
+      ! TO DO: the variable 'nstates_selected' should probably be declared as INTEGER(kind=int_8),
+      !        however we need a special version of the subroutine sort() in order to do so
+      nstates_selected_int8 = ipatddfpt_number_of_active_states(gs_mos, max_eval)
+      IF (nstates_selected_int8 < HUGE(nstates_selected)) THEN
+         nstates_selected = INT(nstates_selected_int8)
+      ELSE
+         nstates_selected = HUGE(nstates_selected)
+      END IF
+
+      ALLOCATE (inds(nstates_selected))
+      ALLOCATE (e_virt_minus_occ(nstates_selected))
+      ALLOCATE (states_info_selected(3, nstates_selected))
+
+      istate = 0
+      DO ispin = 1, nspins
+         DO imo_occ = 1, nmo_occ_selected(ispin)
+            ! Here imo_occ enumerate Occupied orbitals in inverse order (from the last to the first element)
+            e_occ = gs_mos(ispin)%evals_occ(nmo_occ_avail(ispin) - imo_occ + 1)
+
+            DO imo_virt = 1, nmo_virt_selected(ispin)
+               IF (gs_mos(ispin)%evals_virt(imo_virt) - e_occ <= max_eval_local .AND. istate < nstates_selected) THEN
+                  istate = istate + 1
+                  e_virt_minus_occ(istate) = gs_mos(ispin)%evals_virt(imo_virt) - e_occ
+                  states_info_selected(1, istate) = nmo_occ_avail(ispin) - imo_occ + 1
+                  states_info_selected(2, istate) = imo_virt
+                  states_info_selected(3, istate) = ispin
+               ELSE
+                  EXIT
+               END IF
+            END DO
+         END DO
+      END DO
+
+      IF (debug_this_module) THEN
+         CPASSERT(istate == nstates_selected)
+      END IF
+
+      CALL sort(e_virt_minus_occ, nstates_selected, inds)
+
+      IF (nspins == 1) THEN
+         ispin = 1
+         spin_label = '     '
+      END IF
+
+      IF (log_unit > 0) THEN
+         WRITE (log_unit, "(1X,A)") "", &
+            "-------------------------------------------------------------------------------", &
+            "-                            TDDFPT Initial Guess                             -", &
+            "-------------------------------------------------------------------------------"
+         WRITE (log_unit, '(T11,A)') "State         Occupied      ->      Virtual          Excitation"
+         WRITE (log_unit, '(T11,A)') "number         orbital              orbital          energy (eV)"
+         WRITE (log_unit, '(1X,79("-"))')
+      END IF
+
+      evals(1:nstates) = e_virt_minus_occ(1:nstates)
+      DO istate = 1, nstates
+         ind = inds(istate)
+         states_info(1:3, istate) = states_info_selected(1:3, ind)
+      END DO
+
+      IF (log_unit > 0) THEN
+         DO istate = 1, nstates
+            IF (nspins > 1) THEN
+               IF (states_info(3, istate) == 1) THEN
+                  spin_label = '(alp)'
+               ELSE
+                  spin_label = '(bet)'
+               END IF
+            END IF
+
+            WRITE (log_unit, '(T7,I8,T24,I8,T37,A5,T45,I8,T54,A5,T60,F14.5)') &
+               istate, states_info(1, istate), spin_label, nmo_occ_avail(ispin) + states_info(2, istate), &
+               spin_label, evals(istate)*evolt
+         END DO
+      END IF
+
+      IF (log_unit > 0) THEN
+         WRITE (log_unit, '(/,T7,A,T50,I24)') 'Number of active states:', tddfpt_total_number_of_states(gs_mos)
+         WRITE (log_unit, "(1X,A)") &
+            "-------------------------------------------------------------------------------"
+      END IF
+
+      DEALLOCATE (states_info_selected)
+      DEALLOCATE (e_virt_minus_occ)
+      DEALLOCATE (inds)
+
+      CALL timestop(handle)
+
+   END SUBROUTINE ipatddfpt_guess_vectors
+! <<< DEBUG INDEPENDENT PARTICLE APPROXIMATION
 
 ! **************************************************************************************************
 !> \brief Prepare MOs for TDDFPT Calculations

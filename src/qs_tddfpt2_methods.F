@@ -51,7 +51,8 @@ MODULE qs_tddfpt2_methods
                                               section_vals_get_subs_vals,&
                                               section_vals_type,&
                                               section_vals_val_get
-   USE kinds,                           ONLY: dp
+   USE kinds,                           ONLY: dp,&
+                                              int_8
    USE lri_environment_methods,         ONLY: lri_print_stat
    USE lri_environment_types,           ONLY: lri_density_release,&
                                               lri_env_release
@@ -67,7 +68,6 @@ MODULE qs_tddfpt2_methods
                                               release_kernel_env
    USE qs_mo_types,                     ONLY: get_mo_set,&
                                               mo_set_p_type
-   USE qs_scf_methods,                  ONLY: eigensolver
    USE qs_scf_types,                    ONLY: qs_scf_env_type
    USE qs_tddfpt2_densities,            ONLY: tddfpt_construct_aux_fit_density,&
                                               tddfpt_construct_ground_state_orb_density
@@ -81,7 +81,8 @@ MODULE qs_tddfpt2_methods
                                               tddfpt_resvec2_xtb,&
                                               tddfpt_resvec3
    USE qs_tddfpt2_lri_utils,            ONLY: tddfpt2_lri_init
-   USE qs_tddfpt2_properties,           ONLY: tddfpt_dipole_operator,&
+   USE qs_tddfpt2_properties,           ONLY: ipatddfpt_print_summary,&
+                                              tddfpt_dipole_operator,&
                                               tddfpt_print_excitation_analysis,&
                                               tddfpt_print_nto_analysis,&
                                               tddfpt_print_summary
@@ -101,7 +102,9 @@ MODULE qs_tddfpt2_methods
                                               tddfpt_ground_state_mos,&
                                               tddfpt_release_work_matrices,&
                                               tddfpt_work_matrices
-   USE qs_tddfpt2_utils,                ONLY: tddfpt_guess_vectors,&
+   USE qs_tddfpt2_utils,                ONLY: ipatddfpt_guess_vectors,&
+                                              ipatddfpt_number_of_active_states,&
+                                              tddfpt_guess_vectors,&
                                               tddfpt_init_mos,&
                                               tddfpt_oecorr,&
                                               tddfpt_release_ground_state_mos
@@ -120,11 +123,118 @@ MODULE qs_tddfpt2_methods
    INTEGER, PARAMETER, PRIVATE          :: nderivs = 3
    INTEGER, PARAMETER, PRIVATE          :: maxspins = 2
 
-   PUBLIC :: tddfpt
+   PUBLIC :: tddfpt, tddfpt_ipa
 
 ! **************************************************************************************************
 
 CONTAINS
+
+! **************************************************************************************************
+!> \brief ...
+!> \param qs_env ...
+! **************************************************************************************************
+   SUBROUTINE tddfpt_ipa(qs_env)
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+
+      CHARACTER(LEN=*), PARAMETER                        :: routineN = 'tddfpt_dummy'
+
+      INTEGER                                            :: handle, icoord, ispin, log_unit, mult, &
+                                                            nspins
+      INTEGER(kind=int_8)                                :: nstates
+      INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: states_info
+      REAL(kind=dp), ALLOCATABLE, DIMENSION(:)           :: evals
+      TYPE(cp_blacs_env_type), POINTER                   :: blacs_env
+      TYPE(cp_fm_p_type), ALLOCATABLE, DIMENSION(:, :)   :: dipole_op_mos_occ
+      TYPE(cp_logger_type), POINTER                      :: logger
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_ks, matrix_s
+      TYPE(dft_control_type), POINTER                    :: dft_control
+      TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mos
+      TYPE(qs_scf_env_type), POINTER                     :: scf_env
+      TYPE(section_vals_type), POINTER                   :: tddfpt_print_section
+      TYPE(tddfpt2_control_type), POINTER                :: tddfpt_control
+      TYPE(tddfpt_ground_state_mos), DIMENSION(:), &
+         POINTER                                         :: gs_mos
+
+!      INTEGER, DIMENSION(2)                              :: nmo_occ, nmo_virt
+
+      CALL timeset(routineN, handle)
+
+      NULLIFY (logger)
+      logger => cp_get_default_logger()
+
+      NULLIFY (tddfpt_print_section)
+      tddfpt_print_section => section_vals_get_subs_vals(qs_env%input, "PROPERTIES%TDDFPT%PRINT")
+
+      CALL get_qs_env(qs_env, blacs_env=blacs_env, dft_control=dft_control, &
+                      matrix_ks=matrix_ks, matrix_s=matrix_s, mos=mos, scf_env=scf_env)
+      tddfpt_control => dft_control%tddfpt2_control
+
+      log_unit = cp_print_key_unit_nr(logger, tddfpt_print_section, "PROGRAM_BANNER", extension=".tddfptLog")
+      CALL tddfpt_header(log_unit)
+      IF (log_unit > 0) THEN
+         WRITE (log_unit, "(T2,A,T21,A)") "TDDFPT|", "Compute excited state properties using initial guess vectors"
+      END IF
+      ! obtain occupied and virtual (unoccupied) ground-state Kohn-Sham orbitals
+      NULLIFY (gs_mos)
+      CALL tddfpt_init_mos(qs_env, gs_mos)
+      nstates = ipatddfpt_number_of_active_states(gs_mos, tddfpt_control%ev_max)
+      IF (tddfpt_control%nstates >= 0 .AND. INT(tddfpt_control%nstates, kind=int_8) < nstates) THEN
+         nstates = INT(tddfpt_control%nstates, kind=int_8)
+      END IF
+      IF (log_unit > 0) THEN
+         WRITE (log_unit, "(T2,A,T61,I20)") "TDDFPT| Number of excited states", nstates
+      END IF
+      CALL cp_print_key_finished_output(log_unit, logger, tddfpt_print_section, "PROGRAM_BANNER")
+
+      ! components of the dipole operator
+      CALL tddfpt_dipole_operator(dipole_op_mos_occ, tddfpt_control, gs_mos, qs_env)
+
+      nspins = SIZE(gs_mos)
+      ! multiplicity of molecular system
+      IF (nspins > 1) THEN
+         mult = ABS(SIZE(gs_mos(1)%evals_occ) - SIZE(gs_mos(2)%evals_occ)) + 1
+      ELSE
+         IF (tddfpt_control%rks_triplets) THEN
+            mult = 3
+         ELSE
+            mult = 1
+         END IF
+      END IF
+
+      ALLOCATE (states_info(3, nstates))
+      ALLOCATE (evals(nstates))
+
+      ! build the list of missed singly excited states and sort them in ascending order
+      ! according to their excitation energies
+      log_unit = cp_print_key_unit_nr(logger, tddfpt_print_section, "GUESS_VECTORS", extension=".tddfptLog")
+      CALL ipatddfpt_guess_vectors(states_info, evals, gs_mos, tddfpt_control%ev_max, log_unit)
+      CALL cp_print_key_finished_output(log_unit, logger, tddfpt_print_section, "GUESS_VECTORS")
+
+      ! *** print summary information ***
+      log_unit = cp_logger_get_default_io_unit()
+      CALL ipatddfpt_print_summary(log_unit, states_info, evals, gs_mos, mult, &
+                                  dipole_op_mos_occ, tddfpt_control%dipole_form)
+
+      DEALLOCATE (evals)
+      DEALLOCATE (states_info)
+
+      IF (ALLOCATED(dipole_op_mos_occ)) THEN
+         DO ispin = nspins, 1, -1
+            DO icoord = SIZE(dipole_op_mos_occ, 1), 1, -1
+               CALL cp_fm_release(dipole_op_mos_occ(icoord, ispin)%matrix)
+            END DO
+         END DO
+         DEALLOCATE (dipole_op_mos_occ)
+      END IF
+
+      DO ispin = nspins, 1, -1
+         CALL tddfpt_release_ground_state_mos(gs_mos(ispin))
+      END DO
+      DEALLOCATE (gs_mos)
+
+      CALL timestop(handle)
+
+   END SUBROUTINE tddfpt_ipa
 
 ! **************************************************************************************************
 !> \brief Perform TDDFPT calculation.

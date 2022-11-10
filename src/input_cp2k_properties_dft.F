@@ -1263,6 +1263,22 @@ CONTAINS
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 
+      ! Independent particles
+      CALL keyword_create(keyword, __LOCATION__, name="INDEPENDENT_PARTICLE", &
+                          description="Compute oscilator strengts based on ground-state KS-DFT wavefunction.", &
+                          n_var=1, type_of_var=logical_t, &
+                          default_l_val=.FALSE.)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="MAX_EVAL", &
+                          description="Maximum eigenvalue to consider.", &
+                          n_var=1, type_of_var=real_t, &
+                          unit_str="eV", &
+                          default_r_val=0.0_dp)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
       ! Integer
       CALL keyword_create(keyword, __LOCATION__, name="NSTATES", &
                           description="Number of excited states to converge.", &

@@ -1264,6 +1264,9 @@ CONTAINS
 
       CALL section_vals_val_get(t_section, "_SECTION_PARAMETERS_", l_val=t_control%enabled)
 
+      CALL section_vals_val_get(t_section, "INDEPENDENT_PARTICLE", l_val=t_control%independent_particle)
+      CALL section_vals_val_get(t_section, "MAX_EVAL", r_val=t_control%ev_max)
+
       CALL section_vals_val_get(t_section, "NSTATES", i_val=t_control%nstates)
       CALL section_vals_val_get(t_section, "MAX_ITER", i_val=t_control%niters)
       CALL section_vals_val_get(t_section, "MAX_KV", i_val=t_control%nkvs)
