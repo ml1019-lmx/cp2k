@@ -135,6 +135,22 @@ MODULE negf_methods
                                               scf_env_density_mixing
    USE qs_subsys_types,                 ONLY: qs_subsys_type
    USE string_utilities,                ONLY: integer_to_string
+! plot e_density
+   USE qs_scf_post_gpw,                 ONLY: write_mo_free_results,hirshfeld_charges
+
+
+!Mengxuan Li compute_charge
+   USE population_analyses,             ONLY: mulliken_population_analysis
+
+   USE hirshfeld_types,                 ONLY: create_hirshfeld_type,&
+                                              hirshfeld_type,&
+                                              release_hirshfeld_type,&
+                                              set_hirshfeld_info
+   USE kinds,                           ONLY: default_path_length,&
+                                              default_string_length,&
+                                              dp
+
+
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE
@@ -281,7 +297,8 @@ CONTAINS
          CALL force_env_get(force_env, qs_env=qs_env)
          CALL shift_potential(negf_env, negf_control, sub_env, qs_env, base_contact=1, log_unit=log_unit)
 
-         CALL converge_density(negf_env, negf_control, sub_env, qs_env, negf_control%v_shift, base_contact=1, log_unit=log_unit)
+         CALL converge_density(negf_env, negf_control, sub_env, qs_env, negf_control%v_shift, &
+base_contact=1, log_unit=log_unit)
 
          ! current
          CALL get_qs_env(qs_env, dft_control=dft_control)
@@ -363,7 +380,10 @@ CONTAINS
 
             CALL force_env_get(force_env, qs_env=qs_env)
             CALL negf_print_pdos(qs_env, pdos_section, cholesky_inverse)
+            CALL compute_charges(qs_env,negf_section)
+
          END IF
+
       END IF
 
       CALL negf_env_release(negf_env)
@@ -903,7 +923,7 @@ CONTAINS
       negf_control%v_shift = v_shift_guess
 
       IF (log_unit > 0) THEN
-         WRITE (log_unit, '(T2,A,T62,F18.8)') "NEGF|    Shift in Hartree potential", negf_control%v_shift
+         WRITE (log_unit, '(T2,A,T62,F18.11)') "NEGF|    Shift in Hartree potential", negf_control%v_shift
       END IF
 
       DO ispin = nspins, 1, -1
@@ -942,6 +962,7 @@ CONTAINS
       TYPE(qs_environment_type), POINTER                 :: qs_env
       REAL(kind=dp), INTENT(in)                          :: v_shift
       INTEGER, INTENT(in)                                :: base_contact, log_unit
+! Mengxuan Li
 
       CHARACTER(LEN=*), PARAMETER                        :: routineN = 'converge_density'
       REAL(kind=dp), PARAMETER :: threshold = 16.0_dp*EPSILON(0.0_dp)
@@ -1244,7 +1265,6 @@ CONTAINS
                END IF
 
                CALL qs_rho_update_rho(rho_struct, qs_env=qs_env)
-
                IF (negf_env%mixing_method >= gspace_mixing_nr) THEN
                   CALL gspace_mixing(qs_env, negf_env%mixing_method, negf_env%mixing_storage, &
                                      rho_struct, para_env, iter_count)
@@ -3167,4 +3187,90 @@ CONTAINS
       END IF
       CALL timestop(handle)
    END SUBROUTINE negf_print_pdos
+! **************************************************************************************************
+!> \brief compute charge under voltages
+!> \param qs_env ...
+!> \ Mengxuan Li
+! **************************************************************************************************
+   SUBROUTINE compute_charges(qs_env,negf_section)
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      TYPE(section_vals_type), POINTER                   :: negf_section
+
+      CHARACTER(len=*), PARAMETER :: routineN = 'write_mo_free_results'
+      CHARACTER(len=1), DIMENSION(3), PARAMETER          :: cdir = (/"x", "y", "z"/)
+
+      INTEGER ::  output_unit, print_level, unit_nr
+      LOGICAL :: do_kpoints,  print_it, rho_r_valid
+      TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
+      TYPE(cp_logger_type), POINTER                      :: logger
+      TYPE(cp_para_env_type), POINTER                    :: para_env
+      TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: ks_rmpv, matrix_vxc, rho_ao
+      TYPE(dft_control_type), POINTER                    :: dft_control
+      TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
+      TYPE(qs_rho_type), POINTER                         :: rho
+      TYPE(qs_subsys_type), POINTER                      :: subsys
+      TYPE(section_vals_type), POINTER                   :: dft_section, input, print_key,  &
+                                                            xc_section
+
+      !CALL timeset(routineN, handle)
+      NULLIFY ( dft_control, &
+               atomic_kind_set, qs_kind_set, rho, ks_rmpv, rho_ao, &
+               dft_section, xc_section, input,  subsys, matrix_vxc )
+
+      logger => cp_get_default_logger()
+      output_unit = cp_logger_get_default_io_unit(logger)
+
+      CPASSERT(ASSOCIATED(qs_env))
+      CALL get_qs_env(qs_env, &
+                      atomic_kind_set=atomic_kind_set, &
+                      qs_kind_set=qs_kind_set, &
+                      para_env=para_env, &
+                      dft_control=dft_control, &
+                      input=input, &
+                      do_kpoints=do_kpoints, &
+                      subsys=subsys)
+      dft_section => section_vals_get_subs_vals(input, "DFT")
+      !CALL qs_subsys_get(subsys, particles=particles)
+
+
+      ! Compute the Mulliken charges
+      print_key => section_vals_get_subs_vals(negf_section, "PRINT%MULLIKEN")
+      IF (BTEST(cp_print_key_should_output(logger%iter_info, print_key), cp_p_file)) THEN
+         unit_nr = cp_print_key_unit_nr(logger, negf_section, "PRINT%MULLIKEN", extension=".mulliken", log_filename=.FALSE.)
+         print_level = 1
+         CALL section_vals_val_get(print_key, "PRINT_GOP", l_val=print_it)
+         IF (print_it) print_level = 2
+         CALL section_vals_val_get(print_key, "PRINT_ALL", l_val=print_it)
+         IF (print_it) print_level = 3
+         CALL mulliken_population_analysis(qs_env, unit_nr, print_level)
+         CALL cp_print_key_finished_output(unit_nr, logger, negf_section, "PRINT%MULLIKEN")
+      END IF
+
+      ! Compute the Hirshfeld charges
+!      print_key => section_vals_get_subs_vals(NEGF_section, "PRINT%HIRSHFELD")
+!      IF (BTEST(cp_print_key_should_output(logger%iter_info, print_key), cp_p_file)) THEN
+!         ! we check if real space density is available
+!         NULLIFY (rho)
+!         CALL get_qs_env(qs_env=qs_env, rho=rho)
+!         CALL qs_rho_get(rho, rho_r_valid=rho_r_valid)
+!         IF (rho_r_valid) THEN
+!            unit_nr = cp_print_key_unit_nr(logger, NEGF_section, "PRINT%HIRSHFELD", extension=".hirshfeld", log_filename=.FALSE.)
+!            CALL hirshfeld_charges(qs_env, print_key, unit_nr)
+!            CALL cp_print_key_finished_output(unit_nr, logger, NEGF_section, "PRINT%HIRSHFELD")
+!         END IF
+!      END IF
+      print_key => section_vals_get_subs_vals(input, "DFT%PRINT%HIRSHFELD")
+      IF (BTEST(cp_print_key_should_output(logger%iter_info, print_key), cp_p_file)) THEN
+         ! we check if real space density is available
+         NULLIFY (rho)
+         CALL get_qs_env(qs_env=qs_env, rho=rho)
+         CALL qs_rho_get(rho, rho_r_valid=rho_r_valid)
+         IF (rho_r_valid) THEN
+            unit_nr = cp_print_key_unit_nr(logger, input, "DFT%PRINT%HIRSHFELD", extension=".hirshfeld", log_filename=.FALSE.)
+            CALL hirshfeld_charges(qs_env, print_key, unit_nr)
+            CALL cp_print_key_finished_output(unit_nr, logger, input, "DFT%PRINT%HIRSHFELD")
+         END IF
+      END IF
+   END SUBROUTINE compute_charges
+
 END MODULE negf_methods
